@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FORMEXA - dslap | High-Precision Biomechanical Form Analyzer</title>
-    <meta name="description" content="FORMEXA - dslap: Ultra-strict high-precision AI Gym Form & Posture Analyzer with 3D MediaPipe pose tracking." />
+    <title>FORMEXA - dslap | 12-Rep Set Target & Biomechanical Analyzer</title>
+    <meta name="description" content="FORMEXA - dslap: High-Precision 12-Rep Target Set Form Analyzer with live camera MediaPipe 3D pose tracking." />
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -51,8 +51,7 @@
           secondary: 'Brachialis, Forearms',
           idealElbow: '35° - 45°',
           idealTorso: '0° - 6°',
-          strictDriftLimit: '8 cm',
-          strictTorsoLimit: '6°'
+          targetReps: 12
         },
         squat: {
           name: 'Barbell Squat',
@@ -61,8 +60,7 @@
           secondary: 'Hamstrings, Core',
           idealKnee: '80° - 90° (Parallel)',
           idealTorso: '< 25° Incline',
-          strictDepthLimit: '90° (Parallel)',
-          strictValgusLimit: '< 3% Drift'
+          targetReps: 12
         },
         push_up: {
           name: 'Push-Up',
@@ -71,8 +69,7 @@
           secondary: 'Anterior Deltoids, Triceps',
           idealElbow: '90° Flexion',
           idealHip: '170° - 180° Plank',
-          strictPlankLimit: '170° - 180°',
-          strictFlareLimit: '< 55°'
+          targetReps: 12
         },
         shoulder_press: {
           name: 'Overhead Press',
@@ -81,7 +78,7 @@
           secondary: 'Triceps, Upper Chest',
           idealShoulder: '160° Overhead',
           idealTorso: '0° Neutral Spine',
-          strictArchLimit: '< 8°'
+          targetReps: 12
         },
         lunge: {
           name: 'Forward Lunge',
@@ -90,12 +87,14 @@
           secondary: 'Calves, Core',
           idealKnee: '90° Front & Back',
           idealTorso: 'Upright',
-          strictAsymmetryLimit: '< 10°'
+          targetReps: 12
         }
       };
 
+      const TARGET_REPS_PER_SET = 12;
+
       // --- STRICT SESSION STATE MANAGER ---
-      const OUT_OF_FRAME_DISCARD_MS = 2 * 60 * 1000; // 2 minutes
+      const OUT_OF_FRAME_DISCARD_MS = 2 * 60 * 1000;
       const DEBOUNCE_FRAMES = 8;
 
       class SessionStateManager {
@@ -175,11 +174,13 @@
         const [exercise, setExercise] = useState('bicep_curl');
         const [isDemoMode, setIsDemoMode] = useState(false);
         const [simPreset, setSimPreset] = useState('PERFECT');
-        const [cameraState, setCameraState] = useState('prompt'); // prompt | starting | granted | denied
+        const [cameraState, setCameraState] = useState('prompt');
         const [cameraError, setCameraError] = useState(null);
 
-        // Strict Telemetry State
+        // 12-Rep Target & Set Telemetry State
         const [reps, setReps] = useState(0);
+        const [setNumber, setSetNumber] = useState(1);
+        const [isSetCompleteModalOpen, setIsSetCompleteModalOpen] = useState(false);
         const [formScore, setFormScore] = useState(96);
         const [activeFlaws, setActiveFlaws] = useState([]);
         const [primaryCorrectionMsg, setPrimaryCorrectionMsg] = useState('Strict posture clean. Lockout maintained.');
@@ -224,7 +225,6 @@
           );
         }
 
-        // Timer interval for UI update
         useEffect(() => {
           const timer = setInterval(() => {
             if (sessionMgrRef.current) {
@@ -234,18 +234,26 @@
           return () => clearInterval(timer);
         }, []);
 
-        // Canvas & Video Refs
         const videoRef = useRef(null);
         const canvasRef = useRef(null);
         const poseInstanceRef = useRef(null);
         const cameraInstanceRef = useRef(null);
         const animRef = useRef(null);
         const repPhaseRef = useRef('START');
+        const angleHistoryRef = useRef([]);
 
-        // Draw High-Precision On-Body Visual Corrections & Angle Arc Protractors
+        // Start Next Set Trigger (12 Reps Goal)
+        const handleStartNextSet = () => {
+          setReps(0);
+          setSetNumber(s => s + 1);
+          setIsSetCompleteModalOpen(false);
+          repPhaseRef.current = 'START';
+          speak(`Starting Set ${setNumber + 1}. Goal is 12 reps.`);
+        };
+
+        // Draw High-Precision Visual Corrections & Angle Arc Protractors
         const drawBodyCorrectionsHighPrecision = (ctx, width, height, landmarks, flaws, joints) => {
           ctx.clearRect(0, 0, width, height);
-
           if (!landmarks || landmarks.length === 0) return;
 
           const getPt = (idx) => {
@@ -254,18 +262,12 @@
             return { x: (1 - lm.x) * width, y: lm.y * height, z: lm.z || 0, visibility: lm.visibility || 1 };
           };
 
-          const lShoulder = getPt(11);
-          const rShoulder = getPt(12);
-          const lElbow = getPt(13);
-          const rElbow = getPt(14);
-          const lWrist = getPt(15);
-          const rWrist = getPt(16);
-          const lHip = getPt(23);
-          const rHip = getPt(24);
-          const lKnee = getPt(25);
-          const rKnee = getPt(26);
-          const lAnkle = getPt(27);
-          const rAnkle = getPt(28);
+          const lShoulder = getPt(11); const rShoulder = getPt(12);
+          const lElbow = getPt(13); const rElbow = getPt(14);
+          const lWrist = getPt(15); const rWrist = getPt(16);
+          const lHip = getPt(23); const rHip = getPt(24);
+          const lKnee = getPt(25); const rKnee = getPt(26);
+          const lAnkle = getPt(27); const rAnkle = getPt(28);
 
           const connections = [
             [lShoulder, rShoulder], [lShoulder, lHip], [rShoulder, rHip], [lHip, rHip],
@@ -275,9 +277,8 @@
 
           const hasElbowDrift = flaws.some(f => f.id === 'elbow_drift');
           const hasTorsoSwing = flaws.some(f => f.id === 'torso_swing');
-          const hasSquatDepth = flaws.some(f => f.id === 'squat_depth');
 
-          // Draw Skeleton Lines with Neon Glow
+          // Skeleton Lines
           connections.forEach(([p1, p2]) => {
             if (p1 && p2 && p1.visibility > 0.5 && p2.visibility > 0.5) {
               ctx.beginPath();
@@ -292,7 +293,7 @@
             }
           });
 
-          // Draw Joint Keypoint Nodes
+          // Joint Nodes
           const allJoints = [lShoulder, rShoulder, lElbow, rElbow, lWrist, rWrist, lHip, rHip, lKnee, rKnee, lAnkle, rAnkle];
           allJoints.forEach((pt) => {
             if (pt && pt.visibility > 0.5) {
@@ -306,22 +307,9 @@
             }
           });
 
-          // --- HIGH-PRECISION ON-BODY CORRECTION OVERLAYS ---
-
-          // 1. ANGLE PROTRACTOR ARC AT RIGHT ELBOW
-          if (rElbow && rShoulder && rWrist && rElbow.visibility > 0.5) {
-            const radius = 28;
-            const startAngle = Math.atan2(rShoulder.y - rElbow.y, rShoulder.x - rElbow.x);
-            const endAngle = Math.atan2(rWrist.y - rElbow.y, rWrist.x - rElbow.x);
-
-            ctx.beginPath();
-            ctx.arc(rElbow.x, rElbow.y, radius, startAngle, endAngle);
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = hasElbowDrift ? '#f43f5e' : '#38bdf8';
-            ctx.stroke();
-
-            // Direct Numerical Cm Drift Badge over Right Elbow
-            const driftText = `R-Elbow: ${joints.rightElbow}° | Drift: ${joints.upperArmDriftCm}cm ${hasElbowDrift ? '⚠️ STRICT FAULT (>8.0cm)' : '✓ PINNED'}`;
+          // Angle Callout Badge
+          if (rElbow && rElbow.visibility > 0.5) {
+            const driftText = `R-Elbow: ${joints.rightElbow}° | Reps: ${reps}/12 ${hasElbowDrift ? '⚠️ DRIFT FAULT' : '✓ GOOD'}`;
             ctx.font = 'bold 12px JetBrains Mono';
             const txtWidth = ctx.measureText(driftText).width;
 
@@ -329,44 +317,12 @@
             ctx.fillRect(rElbow.x + 15, rElbow.y - 14, txtWidth + 18, 26);
             ctx.strokeStyle = hasElbowDrift ? '#f43f5e' : '#10b981';
             ctx.strokeRect(rElbow.x + 15, rElbow.y - 14, txtWidth + 18, 26);
-
             ctx.fillStyle = '#ffffff';
             ctx.fillText(driftText, rElbow.x + 23, rElbow.y + 3);
-
-            // Red Correction Vector Arrow to Torso Ribs
-            if (hasElbowDrift && rHip) {
-              ctx.beginPath();
-              ctx.moveTo(rElbow.x, rElbow.y);
-              ctx.lineTo(rHip.x, rElbow.y);
-              ctx.lineWidth = 4;
-              ctx.strokeStyle = '#f43f5e';
-              ctx.setLineDash([5, 5]);
-              ctx.stroke();
-              ctx.setLineDash([]);
-
-              ctx.beginPath();
-              ctx.arc(rHip.x, rElbow.y, 6, 0, Math.PI * 2);
-              ctx.fillStyle = '#f43f5e';
-              ctx.fill();
-            }
-          }
-
-          // 2. STRICT TORSO INCLINATION OVERLAY
-          if (rShoulder && rHip && hasTorsoSwing) {
-            const midX = (rShoulder.x + rHip.x) / 2;
-            const midY = (rShoulder.y + rHip.y) / 2;
-
-            ctx.font = 'bold 12px JetBrains Mono';
-            ctx.fillStyle = 'rgba(120, 53, 15, 0.95)';
-            ctx.fillRect(midX - 110, midY - 14, 220, 26);
-            ctx.strokeStyle = '#f59e0b';
-            ctx.strokeRect(midX - 110, midY - 14, 220, 26);
-            ctx.fillStyle = '#fde68a';
-            ctx.fillText(`⚠️ TORSO SWING: ${joints.torsoLean}° (Limit: 6.0°)`, midX - 100, midY + 3);
           }
         };
 
-        // Strict Real-Time Pose Processing
+        // Strict Real-Time Pose Processing & 12-Rep Counter Logic
         const processPoseResultsStrict = (results) => {
           const landmarks = results.poseLandmarks;
           const isInFrame = landmarks && landmarks.length > 0;
@@ -382,20 +338,13 @@
             return;
           }
 
-          const lShoulder = landmarks[11];
-          const rShoulder = landmarks[12];
-          const lElbow = landmarks[13];
-          const rElbow = landmarks[14];
-          const lWrist = landmarks[15];
-          const rWrist = landmarks[16];
-          const lHip = landmarks[23];
-          const rHip = landmarks[24];
-          const lKnee = landmarks[25];
-          const rKnee = landmarks[26];
-          const lAnkle = landmarks[27];
-          const rAnkle = landmarks[28];
+          const lShoulder = landmarks[11]; const rShoulder = landmarks[12];
+          const lElbow = landmarks[13]; const rElbow = landmarks[14];
+          const lWrist = landmarks[15]; const rWrist = landmarks[16];
+          const lHip = landmarks[23]; const rHip = landmarks[24];
+          const lKnee = landmarks[25]; const rKnee = landmarks[26];
+          const lAnkle = landmarks[27]; const rAnkle = landmarks[28];
 
-          // 3D Spatial Vector Angle Calculation
           const leftElbowAngle = calculateAngle3D(lShoulder, lElbow, lWrist);
           const rightElbowAngle = calculateAngle3D(rShoulder, rElbow, rWrist);
           const leftKneeAngle = calculateAngle3D(lHip, lKnee, lAnkle);
@@ -404,29 +353,24 @@
           const shoulderMid = { x: (lShoulder.x + rShoulder.x) / 2, y: (lShoulder.y + rShoulder.y) / 2 };
           const hipMid = { x: (lHip.x + rHip.x) / 2, y: (lHip.y + rHip.y) / 2 };
           const torsoLean = Math.round(Math.abs(Math.atan2(hipMid.x - shoulderMid.x, hipMid.y - shoulderMid.y) * 180 / Math.PI));
-
-          // Cm drift measurement
           const upperArmDriftCm = Math.round(Math.abs((rElbow.x - rShoulder.x) * 100) * 10) / 10;
 
           setLiveJoints({ leftElbow: leftElbowAngle, rightElbow: rightElbowAngle, leftKnee: leftKneeAngle, rightKnee: rightKneeAngle, torsoLean, upperArmDriftCm });
 
-          // STRICT BIOMECHANICAL RULE EVALUATION
+          // Form Analysis
           const flaws = [];
           let score = 100;
 
           if (exercise === 'bicep_curl') {
-            // Strict Arm Drift Threshold: > 8.0 cm
             if (upperArmDriftCm > 8.0) {
-              flaws.push({ id: 'elbow_drift', name: 'Elbow Drift', message: `STRICT FAULT: Elbow drifted ${upperArmDriftCm}cm. Pin elbows to ribs (Limit: 8.0cm).` });
+              flaws.push({ id: 'elbow_drift', name: 'Elbow Drift', message: `STRICT FAULT: Arm drift ${upperArmDriftCm}cm. Pin elbows to ribs (Limit: 8.0cm).` });
               score -= 35;
             }
-            // Strict Torso Swing Threshold: > 6.0 degrees
             if (torsoLean > 6.0) {
               flaws.push({ id: 'torso_swing', name: 'Torso Momentum', message: `STRICT FAULT: Torso swing ${torsoLean}°. Lock spine vertical (Limit: 6.0°).` });
               score -= 25;
             }
           } else if (exercise === 'squat') {
-            // Strict Depth Threshold: <= 90 degrees
             if (rightKneeAngle > 90) {
               flaws.push({ id: 'squat_depth', name: 'Incomplete Depth', message: `STRICT FAULT: Knee angle ${rightKneeAngle}°. Descend parallel to 90°.` });
               score -= 30;
@@ -440,20 +384,35 @@
             setPrimaryCorrectionMsg(flaws[0].message);
             speak(flaws[0].message);
           } else {
-            setPrimaryCorrectionMsg('Strict posture clean. Full contraction & lockout maintained.');
+            setPrimaryCorrectionMsg('Strict posture clean. Lockout maintained.');
           }
 
-          // Strict Rep Counter Logic (requires <45° peak & >160° full lockout)
-          const avgElbow = (leftElbowAngle + rightElbowAngle) / 2;
-          if (repPhaseRef.current === 'START' && avgElbow < 50) {
-            repPhaseRef.current = 'PEAK';
-          } else if (repPhaseRef.current === 'PEAK' && avgElbow > 160) {
-            repPhaseRef.current = 'START';
-            setReps(r => r + 1);
-            speak(`Strict Rep ${reps + 1} logged!`);
+          // --- 12-REP TARGET COUNTER ENGINE ---
+          const rawAngle = (leftElbowAngle + rightElbowAngle) / 2;
+          
+          // Moving average filter over 5 frames
+          angleHistoryRef.current.push(rawAngle);
+          if (angleHistoryRef.current.length > 5) angleHistoryRef.current.shift();
+          const smoothedAngle = Math.round(angleHistoryRef.current.reduce((a, b) => a + b, 0) / angleHistoryRef.current.length);
+
+          if (reps < TARGET_REPS_PER_SET) {
+            if (repPhaseRef.current === 'START' && smoothedAngle < 52) {
+              repPhaseRef.current = 'PEAK';
+            } else if (repPhaseRef.current === 'PEAK' && smoothedAngle > 158) {
+              repPhaseRef.current = 'START';
+              const nextRep = reps + 1;
+              setReps(nextRep);
+
+              if (nextRep === TARGET_REPS_PER_SET) {
+                // 12 REPS ACHIEVED - TRIGGER SET COMPLETION
+                setIsSetCompleteModalOpen(true);
+                speak(`Fantastic work! Set ${setNumber} completed with all 12 reps achieved! Take a rest.`);
+              } else {
+                speak(`Rep ${nextRep} of 12 logged.`);
+              }
+            }
           }
 
-          // Render High-Precision Canvas Overlay
           if (canvasRef.current && videoRef.current) {
             const canvas = canvasRef.current;
             canvas.width = videoRef.current.videoWidth || 640;
@@ -463,7 +422,6 @@
           }
         };
 
-        // Start High-Precision MediaPipe Pose Camera (Model Complexity = 2)
         const startCameraStrict = async () => {
           setCameraState('starting');
           setCameraError(null);
@@ -478,15 +436,14 @@
               await videoRef.current.play();
 
               if (window.Pose) {
-                // MODEL COMPLEXITY 2 = HEAVY ULTRA-ACCURATE POSE MODEL
                 const pose = new window.Pose({
                   locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
                 });
 
                 pose.setOptions({
-                  modelComplexity: 2, // HEAVY ULTRA-ACCURATE
+                  modelComplexity: 2,
                   smoothLandmarks: true,
-                  minDetectionConfidence: 0.75, // STRICT CONFIDENCE THRESHOLD
+                  minDetectionConfidence: 0.75,
                   minTrackingConfidence: 0.75
                 });
 
@@ -512,233 +469,66 @@
               setIsDemoMode(false);
             }
           } catch (err) {
-            console.error('Camera initialization error:', err);
             setCameraState('denied');
-            setCameraError(err.message || 'Camera permission denied or camera unavailable.');
+            setCameraError(err.message || 'Camera permission denied.');
           }
         };
 
-        // Fallback Procedural Simulation
-        useEffect(() => {
-          if (isDemoMode) {
-            let phase = 0;
-            const loop = () => {
-              const canvas = canvasRef.current;
-              if (canvas) {
-                const ctx = canvas.getContext('2d');
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                phase += 0.05;
-
-                const isInFrame = simPreset !== 'OUT_OF_FRAME';
-                const status = sessionMgrRef.current.update(isInFrame);
-                setSessionStatus(status);
-
-                if (status.state === 'ACTIVE') {
-                  const armAngle = 170 - Math.abs(Math.sin(phase)) * 120;
-                  const torsoLean = simPreset === 'TORSO_SWING' ? 14 : 2;
-                  const driftCm = simPreset === 'ELBOW_DRIFT' ? 16.4 : 3.2;
-
-                  const flaws = simPreset === 'ELBOW_DRIFT'
-                    ? [{ id: 'elbow_drift', message: 'STRICT FAULT: Elbow drifted 16.4cm. Pin elbows to ribs (Limit: 8.0cm).' }]
-                    : simPreset === 'TORSO_SWING'
-                    ? [{ id: 'torso_swing', message: 'STRICT FAULT: Torso swing 14.0°. Lock spine vertical (Limit: 6.0°).' }]
-                    : [];
-
-                  setActiveFlaws(flaws);
-                  setFormScore(flaws.length > 0 ? 55 : 98);
-                  setPrimaryCorrectionMsg(flaws.length > 0 ? flaws[0].message : 'Strict posture clean.');
-
-                  const cx = canvas.width / 2;
-                  const cy = canvas.height / 2;
-                  ctx.lineWidth = 5;
-                  ctx.strokeStyle = flaws.length > 0 ? '#f43f5e' : '#10b981';
-
-                  const elbowX = cx + 35 + (simPreset === 'ELBOW_DRIFT' ? 24 : 3);
-                  const elbowY = cy - 30;
-                  const wristX = elbowX + Math.sin(armAngle * Math.PI / 180) * 45;
-                  const wristY = elbowY - Math.cos(armAngle * Math.PI / 180) * 45;
-
-                  ctx.beginPath();
-                  ctx.moveTo(cx, cy - 120); ctx.lineTo(cx + torsoLean, cy + 20);
-                  ctx.moveTo(cx - 35, cy - 80); ctx.lineTo(cx + 35, cy - 80);
-                  ctx.moveTo(cx + 35, cy - 80); ctx.lineTo(elbowX, elbowY); ctx.lineTo(wristX, wristY);
-                  ctx.stroke();
-
-                  if (simPreset === 'ELBOW_DRIFT') {
-                    ctx.beginPath();
-                    ctx.arc(elbowX, elbowY, 20, 0, Math.PI * 2);
-                    ctx.strokeStyle = '#f43f5e';
-                    ctx.stroke();
-
-                    ctx.fillStyle = 'rgba(159, 18, 57, 0.95)';
-                    ctx.fillRect(elbowX + 15, elbowY - 14, 250, 26);
-                    ctx.fillStyle = '#ffffff';
-                    ctx.font = 'bold 12px JetBrains Mono';
-                    ctx.fillText(`${Math.round(armAngle)}° ⚠️ DRIFT: 16.4cm (>8.0cm)!`, elbowX + 22, elbowY + 3);
-                  }
-                }
-              }
-              animRef.current = requestAnimationFrame(loop);
-            };
-            animRef.current = requestAnimationFrame(loop);
-            return () => cancelAnimationFrame(animRef.current);
-          }
-        }, [isDemoMode, simPreset]);
-
         const currentDef = EXERCISES[exercise];
+        const progressPercent = Math.min(100, Math.round((reps / TARGET_REPS_PER_SET) * 100));
 
         return (
           <div className="min-h-screen flex flex-col font-sans">
-            {/* Header */}
             <header className="bg-slate-900/90 border-b border-cyan-500/20 px-6 py-4 flex items-center justify-between sticky top-0 z-40 backdrop-blur-md">
               <div className="flex items-center space-x-3">
-                <div className="p-2 bg-gradient-to-br from-cyan-500 to-emerald-400 rounded-xl text-slate-950 font-black text-lg shadow-lg shadow-cyan-500/30">
-                  ⚡
-                </div>
+                <div className="p-2 bg-gradient-to-br from-cyan-500 to-emerald-400 rounded-xl text-slate-950 font-black text-lg shadow-lg">⚡</div>
                 <div>
-                  <h1 className="text-xl font-black text-white tracking-tight flex items-center space-x-2 uppercase font-sans">
-                    <span>FORMEXA - <span className="text-cyan-400 font-mono">dslap</span></span>
-                    <span className="px-2 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-full text-[10px] font-mono font-bold">
-                      ULTRA-STRICT 3D POSE ENGINE
-                    </span>
+                  <h1 className="text-xl font-black text-white tracking-tight uppercase">
+                    FORMEXA - <span className="text-cyan-400 font-mono">dslap</span>
                   </h1>
-                  <p className="text-xs text-slate-400">High-Precision MediaPipe Heavy 3D Pose Tracking & Strict Biomechanical Tolerances</p>
+                  <p className="text-xs text-slate-400">12-Rep Target Set Form Analyzer & MediaPipe Heavy 3D Pose Engine</p>
                 </div>
               </div>
 
               <div className="flex items-center space-x-4 font-mono text-xs">
-                <div className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 flex items-center space-x-2">
-                  <span className="text-slate-400">STRICT REPS:</span>
-                  <span className="text-cyan-400 font-bold text-sm">{reps}</span>
+                <div className="bg-slate-950 px-3.5 py-1.5 rounded-lg border border-slate-800 flex items-center space-x-2">
+                  <span className="text-slate-400">SET {setNumber}:</span>
+                  <span className="text-cyan-400 font-black text-base">{reps} / 12 REPS</span>
                 </div>
-                <div className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 flex items-center space-x-2">
+                <div className="bg-slate-950 px-3.5 py-1.5 rounded-lg border border-slate-800 flex items-center space-x-2">
                   <span className="text-slate-400">FORM SCORE:</span>
-                  <span className={`font-bold text-sm ${formScore < 70 ? 'text-rose-400' : 'text-emerald-400'}`}>{formScore}%</span>
+                  <span className={`font-bold text-base ${formScore < 70 ? 'text-rose-400' : 'text-emerald-400'}`}>{formScore}%</span>
                 </div>
               </div>
             </header>
 
-            {/* Main Content Layout */}
             <main className="flex-1 max-w-[1550px] w-full mx-auto p-4 lg:p-6 space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 
-                {/* Left Column: Live Camera Video Feed & Strict Body Corrections (7 cols) */}
+                {/* Left Column: Camera Feed & 12-Rep Set Overlay (7 cols) */}
                 <div className="lg:col-span-7 space-y-4">
-                  <div className="relative w-full h-[480px] lg:h-[540px] bg-slate-900 rounded-2xl overflow-hidden border border-cyan-500/30 shadow-2xl shadow-cyan-950/40">
-                    
-                    {/* Live Laptop Camera Video */}
-                    <video
-                      ref={videoRef}
-                      className={`w-full h-full object-cover transform -scale-x-100 ${!isDemoMode && cameraState === 'granted' ? 'block' : 'hidden'} ${sessionStatus.state === 'PAUSED' ? 'brightness-50 blur-[2px]' : ''}`}
-                      autoPlay
-                      playsInline
-                      muted
-                    />
+                  <div className="relative w-full h-[480px] lg:h-[540px] bg-slate-900 rounded-2xl overflow-hidden border border-cyan-500/30 shadow-2xl">
+                    <video ref={videoRef} className={`w-full h-full object-cover transform -scale-x-100 ${!isDemoMode && cameraState === 'granted' ? 'block' : 'hidden'}`} autoPlay playsInline muted />
+                    <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover pointer-events-none z-10" />
 
-                    {/* Live High-Precision Canvas Overlay */}
-                    <canvas
-                      ref={canvasRef}
-                      className="absolute inset-0 w-full h-full object-cover pointer-events-none z-10"
-                    />
-
-                    {/* Camera Permission Prompt */}
                     {!isDemoMode && cameraState !== 'granted' && (
                       <div className="absolute inset-0 bg-slate-950/90 z-20 flex flex-col items-center justify-center p-6 text-center space-y-4">
-                        <div className="p-3 bg-cyan-500/20 text-cyan-400 rounded-2xl border border-cyan-500/40 text-3xl">
-                          🎯
-                        </div>
-                        <h3 className="text-xl font-bold text-white">Enable High-Precision 3D Camera Pose Engine</h3>
-                        <p className="text-xs text-slate-300 max-w-md">
-                          FORMEXA - dslap uses MediaPipe Heavy 3D tracking with 75% confidence gating to enforce strict biomechanical joint limits in real time.
-                        </p>
-
-                        {cameraError && (
-                          <div className="p-2.5 bg-rose-500/20 border border-rose-500/40 rounded-xl text-xs text-rose-200">
-                            ⚠️ {cameraError}
-                          </div>
-                        )}
-
-                        <div className="flex space-x-3">
-                          <button
-                            onClick={startCameraStrict}
-                            disabled={cameraState === 'starting'}
-                            className="px-5 py-3 bg-gradient-to-r from-cyan-500 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-cyan-500/30 transition-all flex items-center space-x-2"
-                          >
-                            <span>{cameraState === 'starting' ? 'Loading Heavy 3D Pose Model...' : 'Turn On Live High-Precision Camera'}</span>
-                          </button>
-                          <button
-                            onClick={() => setIsDemoMode(true)}
-                            className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs rounded-xl transition-all"
-                          >
-                            Use Demo Mode
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* PAUSED Overlay */}
-                    {sessionStatus.state === 'PAUSED' && (
-                      <div className="absolute inset-0 z-30 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center space-y-3">
-                        <div className="p-3.5 bg-amber-500/20 border border-amber-500/40 rounded-full text-amber-400 text-2xl">
-                          ⏸️
-                        </div>
-                        <h3 className="text-xl font-black text-white uppercase tracking-wide">Workout Set Paused</h3>
-                        <p className="text-xs text-slate-300 max-w-sm">
-                          You stepped out of camera view. Rep counting is frozen. Step back into frame to automatically resume.
-                        </p>
-                        <div className="bg-slate-900 border border-amber-500/40 px-5 py-2.5 rounded-2xl text-left shadow-xl">
-                          <span className="text-[10px] text-slate-400 font-mono block">SET DISCARD COUNTDOWN</span>
-                          <span className="text-xl font-black font-mono text-amber-300">{sessionStatus.formattedRemainingTime || '02:00'}</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* DISCARDED Overlay */}
-                    {sessionStatus.state === 'DISCARDED' && (
-                      <div className="absolute inset-0 z-30 bg-rose-950/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center space-y-3">
-                        <div className="p-3.5 bg-rose-500/20 border border-rose-500/40 rounded-full text-rose-400 text-2xl">
-                          🗑️
-                        </div>
-                        <h3 className="text-xl font-black text-white uppercase tracking-wide">Set Discarded</h3>
-                        <p className="text-xs text-rose-200 max-w-sm">Out of camera view for over 2 minutes. Current set reps have been reset.</p>
-                      </div>
-                    )}
-
-                    {/* Controls */}
-                    <div className="absolute top-4 right-4 z-20">
-                      <button
-                        onClick={() => setIsDemoMode(!isDemoMode)}
-                        className="px-3.5 py-1.5 bg-slate-900/80 hover:bg-slate-800 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-bold backdrop-blur-md transition-all"
-                      >
-                        {isDemoMode ? '📹 Switch to Live Camera' : '🎮 Switch to Demo Simulation'}
-                      </button>
-                    </div>
-
-                    {/* Demo Presets */}
-                    {isDemoMode && (
-                      <div className="absolute bottom-3 left-3 right-3 bg-slate-950/85 p-2 rounded-xl border border-purple-500/30 backdrop-blur-md flex items-center space-x-2 overflow-x-auto text-xs z-20">
-                        <span className="text-[11px] font-mono font-bold text-purple-300 shrink-0">STRICT SIMULATION:</span>
-                        <button onClick={() => setSimPreset('PERFECT')} className={`px-2.5 py-1 rounded-lg border font-mono ${simPreset === 'PERFECT' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 font-bold' : 'bg-slate-900 text-slate-400'}`}>
-                          ✓ Perfect Form
-                        </button>
-                        <button onClick={() => setSimPreset('ELBOW_DRIFT')} className={`px-2.5 py-1 rounded-lg border font-mono ${simPreset === 'ELBOW_DRIFT' ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 font-bold' : 'bg-slate-900 text-slate-400'}`}>
-                          ⚠️ Strict Arm Drift Fault (>8.0cm)
-                        </button>
-                        <button onClick={() => setSimPreset('TORSO_SWING')} className={`px-2.5 py-1 rounded-lg border font-mono ${simPreset === 'TORSO_SWING' ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 font-bold' : 'bg-slate-900 text-slate-400'}`}>
-                          ⚠️ Strict Torso Lean Fault (>6.0°)
-                        </button>
+                        <div className="p-3 bg-cyan-500/20 text-cyan-400 rounded-2xl border border-cyan-500/40 text-3xl">🎯</div>
+                        <h3 className="text-xl font-bold text-white">Enable Live 12-Rep Target Camera Engine</h3>
+                        <p className="text-xs text-slate-300 max-w-md">Tracks your body technique in real-time until you complete your 12-rep goal per set.</p>
+                        <button onClick={startCameraStrict} className="px-5 py-3 bg-gradient-to-r from-cyan-500 to-emerald-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg">Turn On Live Camera</button>
                       </div>
                     )}
                   </div>
 
                   {/* Exercise Mode Selector */}
                   <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-2">
-                    <span className="text-xs uppercase font-mono text-slate-400 font-bold">Active Exercise & Strict Tolerances</span>
+                    <span className="text-xs uppercase font-mono text-slate-400 font-bold">Select Active Exercise (12 Reps Goal)</span>
                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                       {Object.keys(EXERCISES).map((exKey) => (
                         <button
                           key={exKey}
-                          onClick={() => setExercise(exKey)}
+                          onClick={() => { setExercise(exKey); setReps(0); }}
                           className={`p-2.5 rounded-xl border text-xs font-bold font-mono transition-all text-center ${
                             exercise === exKey
                               ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-md shadow-cyan-950/40'
@@ -750,147 +540,92 @@
                       ))}
                     </div>
                   </div>
-
-                  {/* Strict Form Correction Banner */}
-                  <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl ${activeFlaws.length > 0 ? 'bg-rose-950/80 border-rose-500/50 text-rose-100' : 'bg-emerald-950/80 border-emerald-500/50 text-emerald-100'}`}>
-                    <div className="flex items-start space-x-3">
-                      <div className={`p-2 border rounded-xl shrink-0 text-lg ${activeFlaws.length > 0 ? 'bg-rose-500/20 border-rose-500/40 text-rose-400' : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'}`}>
-                        {activeFlaws.length > 0 ? '⚠️' : '✓'}
-                      </div>
-                      <div>
-                        <span className="text-[11px] font-mono uppercase font-bold tracking-wider block">STRICT BIOMECHANICAL EVALUATION</span>
-                        <p className="text-sm font-extrabold">{primaryCorrectionMsg}</p>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => setIsComparisonOpen(true)}
-                      className="px-3.5 py-2 bg-slate-950 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center space-x-1.5"
-                    >
-                      <span>Compare Strict Form</span>
-                      <span>→</span>
-                    </button>
-                  </div>
                 </div>
 
-                {/* Right Column: High-Precision Joint Telemetry (5 cols) */}
+                {/* Right Column: 12-Rep Set Progress & Telemetry (5 cols) */}
                 <div className="lg:col-span-5 space-y-4">
-                  {/* Strict Score Breakdown Card */}
-                  <div className="bg-slate-900 border border-cyan-500/20 p-5 rounded-2xl space-y-4 shadow-xl">
+                  
+                  {/* 12-REP TARGET SET CARD */}
+                  <div className="bg-slate-900 border border-cyan-500/30 p-5 rounded-2xl space-y-4 shadow-xl">
                     <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider">Form Quality Index</h3>
-                      <span className={`text-2xl font-black font-mono ${formScore < 70 ? 'text-rose-400' : 'text-cyan-400'}`}>{formScore}%</span>
+                      <span className="text-xs uppercase font-mono font-bold px-2.5 py-1 bg-cyan-500/10 text-cyan-400 rounded-md border border-cyan-500/30">
+                        SET {setNumber} PROGRESS
+                      </span>
+                      <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-md">
+                        GOAL: 12 REPS
+                      </span>
                     </div>
 
+                    <div className="space-y-2">
+                      <div className="flex items-baseline justify-between">
+                        <div className="flex items-baseline space-x-2">
+                          <span className="text-6xl font-black font-mono text-white leading-none">{reps}</span>
+                          <span className="text-2xl font-bold font-mono text-slate-400">/ 12</span>
+                          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">REPS COMPLETED</span>
+                        </div>
+                        <span className="text-sm font-mono font-bold text-cyan-400">{progressPercent}%</span>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="w-full bg-slate-950 rounded-full h-3.5 overflow-hidden border border-slate-800">
+                        <div
+                          className="h-full bg-gradient-to-r from-cyan-500 via-emerald-400 to-cyan-300 transition-all duration-300"
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between text-xs font-mono text-slate-400 pt-1">
+                      <span>Reps Remaining: <strong className="text-cyan-300">{Math.max(0, 12 - reps)}</strong></span>
+                      <span>Target ROM: <strong className="text-emerald-400">FULL (160° Lockout)</strong></span>
+                    </div>
+                  </div>
+
+                  {/* Form Score Card */}
+                  <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-4 shadow-xl">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                      <h3 className="text-sm font-bold text-white uppercase font-mono">Form Quality Index</h3>
+                      <span className="text-2xl font-black font-mono text-cyan-400">{formScore}%</span>
+                    </div>
                     <div className="grid grid-cols-2 gap-3 text-xs font-mono">
                       <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
                         <span className="text-slate-400 block text-[10px]">UPPER ARM DRIFT</span>
                         <span className={`font-bold text-base ${liveJoints.upperArmDriftCm > 8.0 ? 'text-rose-400' : 'text-emerald-400'}`}>{liveJoints.upperArmDriftCm} cm</span>
-                        <span className="text-[9px] text-slate-500 block">Strict Limit: 8.0 cm</span>
                       </div>
                       <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                        <span className="text-slate-400 block text-[10px]">TORSO INCLINATION</span>
+                        <span className="text-slate-400 block text-[10px]">TORSO LEAN</span>
                         <span className={`font-bold text-base ${liveJoints.torsoLean > 6.0 ? 'text-amber-400' : 'text-emerald-400'}`}>{liveJoints.torsoLean}°</span>
-                        <span className="text-[9px] text-slate-500 block">Strict Limit: 6.0°</span>
                       </div>
-                      <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                        <span className="text-slate-400 block text-[10px]">RIGHT ELBOW ANGLE</span>
-                        <span className="text-cyan-400 font-bold text-base">{liveJoints.rightElbow}°</span>
-                        <span className="text-[9px] text-slate-500 block">Target Peak: &lt;45°</span>
-                      </div>
-                      <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                        <span className="text-slate-400 block text-[10px]">RIGHT KNEE ANGLE</span>
-                        <span className="text-purple-400 font-bold text-base">{liveJoints.rightKnee}°</span>
-                        <span className="text-[9px] text-slate-500 block">Target Depth: &lt;=90°</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Muscle Engagement Card */}
-                  <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-3 shadow-xl">
-                    <h3 className="text-xs uppercase font-mono font-bold text-slate-300">Anatomical Target & Strict Limits</h3>
-                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1">
-                      <span className="text-[10px] font-mono text-cyan-400 font-bold uppercase">PRIMARY TARGET</span>
-                      <p className="text-sm font-bold text-white">{currentDef.primary}</p>
-                    </div>
-                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1 text-xs font-mono">
-                      <div className="flex justify-between text-slate-300"><span>Strict Arm Drift Limit:</span><span className="text-cyan-300 font-bold">{currentDef.strictDriftLimit || '< 8.0 cm'}</span></div>
-                      <div className="flex justify-between text-slate-300"><span>Strict Torso Swing Limit:</span><span className="text-amber-300 font-bold">{currentDef.strictTorsoLimit || '< 6.0°'}</span></div>
-                    </div>
-                  </div>
-
-                  {/* Telemetry Summary */}
-                  <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl text-xs space-y-2 text-slate-400 font-mono">
-                    <div className="flex justify-between">
-                      <span>Tracking Precision:</span>
-                      <span className="text-emerald-400 font-bold">MEDIA PIPE HEAVY 3D (Complexity 2)</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Confidence Threshold:</span>
-                      <span className="text-cyan-400 font-bold">75% STRICT GATING</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Form Comparison Modal */}
-              {isComparisonOpen && (
-                <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
-                  <div className="bg-slate-900 border border-cyan-500/30 rounded-3xl max-w-3xl w-full p-6 text-white shadow-2xl relative">
-                    <button onClick={() => setIsComparisonOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white p-2">
-                      ✕
+              {/* 12 REPS SET COMPLETE CELEBRATION MODAL */}
+              {isSetCompleteModalOpen && (
+                <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
+                  <div className="bg-slate-900 border border-emerald-500/50 rounded-3xl max-w-md w-full p-6 text-center text-white shadow-2xl relative space-y-5 animate-bounce-short">
+                    <div className="w-16 h-16 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-full flex items-center justify-center text-3xl mx-auto">
+                      🎉
+                    </div>
+
+                    <div className="space-y-1">
+                      <h2 className="text-2xl font-black text-white uppercase tracking-tight">SET {setNumber} COMPLETE!</h2>
+                      <p className="text-sm font-bold text-emerald-300 font-mono">12 / 12 REPS ACHIEVED WITH STRICT FORM</p>
+                    </div>
+
+                    <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs font-mono">
+                      <div className="flex justify-between"><span>Exercise:</span><span className="text-white font-bold">{currentDef.name}</span></div>
+                      <div className="flex justify-between"><span>Average Form Score:</span><span className="text-emerald-400 font-bold">{formScore}%</span></div>
+                      <div className="flex justify-between"><span>Set Rest Time:</span><span className="text-cyan-400 font-bold">60 Seconds Rest</span></div>
+                    </div>
+
+                    <button
+                      onClick={handleStartNextSet}
+                      className="w-full py-3 bg-gradient-to-r from-emerald-500 to-cyan-400 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-emerald-500/30 hover:from-emerald-400 hover:to-cyan-300 transition-all uppercase tracking-wider"
+                    >
+                      Start Set {setNumber + 1} (Goal: 12 Reps)
                     </button>
-
-                    <div className="flex items-center space-x-3 mb-6">
-                      <div className="p-2.5 bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 rounded-xl">
-                        ⚖️
-                      </div>
-                      <div>
-                        <h2 className="text-xl font-bold text-white">FORMEXA - dslap Strict Biomechanical Comparison</h2>
-                        <p className="text-xs text-slate-400">High-precision tolerance comparison of your pose vs gold standard anatomical target</p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-                      {/* Left: Your Current Form */}
-                      <div className="bg-slate-950 border border-rose-500/40 rounded-2xl p-4 space-y-3">
-                        <span className="px-2.5 py-0.5 bg-rose-500/20 text-rose-300 font-mono text-[10px] font-bold rounded border border-rose-500/30">YOUR MEASURED FORM</span>
-                        <h4 className="text-sm font-bold text-rose-300">
-                          {activeFlaws.length > 0 ? activeFlaws[0].name : 'Strict Posture Aligned'}
-                        </h4>
-                        <div className="bg-slate-900 p-3 rounded-xl text-xs space-y-1.5 font-mono">
-                          <div className="flex justify-between"><span>Upper Arm Drift:</span><span className={`font-bold ${liveJoints.upperArmDriftCm > 8.0 ? 'text-rose-400' : 'text-emerald-400'}`}>{liveJoints.upperArmDriftCm} cm</span></div>
-                          <div className="flex justify-between"><span>Torso Swing:</span><span className={`font-bold ${liveJoints.torsoLean > 6.0 ? 'text-amber-400' : 'text-emerald-400'}`}>{liveJoints.torsoLean}°</span></div>
-                          <div className="flex justify-between"><span>Elbow Flexion:</span><span className="text-cyan-400 font-bold">{liveJoints.rightElbow}°</span></div>
-                        </div>
-                      </div>
-
-                      {/* Right: Gold Standard Form */}
-                      <div className="bg-slate-950 border border-emerald-500/40 rounded-2xl p-4 space-y-3">
-                        <span className="px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-bold rounded border border-emerald-500/30">STRICT GOLD STANDARD TARGET</span>
-                        <h4 className="text-sm font-bold text-emerald-300">Zero Arm Drift & Zero Momentum Isolation</h4>
-                        <div className="bg-slate-900 p-3 rounded-xl text-xs space-y-1.5 font-mono">
-                          <div className="flex justify-between"><span>Max Allowed Drift:</span><span className="text-emerald-400 font-bold">&lt; 8.0 cm (Pinned)</span></div>
-                          <div className="flex justify-between"><span>Max Allowed Lean:</span><span className="text-emerald-400 font-bold">&lt; 6.0° (Vertical)</span></div>
-                          <div className="flex justify-between"><span>Target Peak Flexion:</span><span className="text-emerald-400 font-bold">{currentDef.idealElbow || '35° - 45°'}</span></div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2 mb-6 text-xs">
-                      <span className="font-bold text-cyan-400 uppercase font-mono">Strict Posture Correction Protocol:</span>
-                      <ul className="text-slate-300 space-y-1.5 list-disc pl-4">
-                        <li>Pin upper arm firmly to ribcage; do not exceed 8.0cm horizontal elbow drift.</li>
-                        <li>Brace core to keep spine incline under 6.0°; do not swing back for momentum.</li>
-                        <li>Achieve full bicep flexion (&lt;45°) at peak and complete lockout (&gt;160°) at bottom.</li>
-                      </ul>
-                    </div>
-
-                    <div className="flex justify-end">
-                      <button onClick={() => setIsComparisonOpen(false)} className="px-5 py-2.5 bg-cyan-500 text-slate-950 font-bold rounded-xl text-xs">
-                        Acknowledge & Resume Workout
-                      </button>
-                    </div>
                   </div>
                 </div>
               )}
