@@ -10,6 +10,8 @@ interface HeaderProps {
   onToggleVoice: () => void;
   totalReps: number;
   averageFormScore: number;
+  isWorkoutActive?: boolean;
+  onToggleWorkout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,7 +21,9 @@ export const Header: React.FC<HeaderProps> = ({
   voiceEnabled,
   onToggleVoice,
   totalReps,
-  averageFormScore
+  averageFormScore,
+  isWorkoutActive = true,
+  onToggleWorkout
 }) => {
   return (
     <header className="w-full bg-slate-950/80 backdrop-blur-xl border-b border-cyan-500/20 px-4 lg:px-8 py-3.5 flex items-center justify-between sticky top-0 z-40 shadow-xl shadow-cyan-950/30">
@@ -59,7 +63,21 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Action Controls */}
-      <div className="flex items-center space-x-2 sm:space-x-3">
+      <div className="flex items-center space-x-2 sm:space-x-3 font-mono text-xs">
+        {/* Workout Start/Off Button */}
+        {onToggleWorkout && (
+          <button
+            onClick={onToggleWorkout}
+            className={`px-4 py-2 rounded-xl font-bold uppercase tracking-wider transition-all shadow-lg flex items-center space-x-2 border ${
+              isWorkoutActive
+                ? 'bg-rose-500 hover:bg-rose-600 text-white border-rose-400 shadow-rose-500/20'
+                : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 border-emerald-300 shadow-emerald-500/30 animate-bounce'
+            }`}
+          >
+            <span>{isWorkoutActive ? '⏹ STOP WORKOUT' : '▶ START WORKOUT'}</span>
+          </button>
+        )}
+
         {/* Voice Feedback Toggle */}
         <button
           onClick={onToggleVoice}
