@@ -9,13 +9,3 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-
-  - type: static
-    name: formexa-dslap-static
-    buildCommand: npm install && node build.js
-    staticPublishPath: ./dist
-    autoDeploy: true
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
