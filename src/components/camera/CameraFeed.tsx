@@ -122,6 +122,100 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
     }
   };
 
+  // MediaPipe Live Webcam Pose Processing Loop
+  useEffect(() => {
+    if (isDemoMode || cameraPermission !== 'granted') return;
+
+    let active = true;
+    let poseInstance: any = null;
+    let animId: number | null = null;
+    let isProcessing = false;
+
+    const initMediaPipe = async () => {
+      let PoseConstructor = (window as any).Pose;
+      if (!PoseConstructor) {
+        try {
+          const poseModule = await import('@mediapipe/pose');
+          PoseConstructor = poseModule.Pose;
+        } catch (e) {
+          console.warn('MediaPipe Pose package loading error:', e);
+        }
+      }
+
+      if (!PoseConstructor || !active) return;
+
+      try {
+        const pose = new PoseConstructor({
+          locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+
+        pose.setOptions({
+          modelComplexity: 1,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+
+        pose.onResults((results: any) => {
+          if (!active) return;
+
+          const lms: PoseLandmarks = results.poseLandmarks || [];
+          setCurrentLandmarks(lms);
+
+          const now = performance.now();
+          frameCountRef.current++;
+          if (now - lastTimeRef.current >= 1000) {
+            setFps(Math.min(60, frameCountRef.current));
+            frameCountRef.current = 0;
+            lastTimeRef.current = now;
+          }
+
+          let calculatedConfidence = 96;
+          if (lms.length > 0) {
+            const sumVis = lms.reduce((acc: number, lm: any) => acc + (lm.visibility ?? 1), 0);
+            calculatedConfidence = Math.min(100, Math.max(50, Math.round((sumVis / lms.length) * 100)));
+          }
+
+          onPoseDetected(lms, 30, calculatedConfidence);
+        });
+
+        poseInstance = pose;
+
+        const processFrame = async () => {
+          if (!active) return;
+          if (videoRef.current && videoRef.current.readyState >= 2 && !isProcessing) {
+            isProcessing = true;
+            try {
+              await pose.send({ image: videoRef.current });
+            } catch (err) {
+              console.warn('Pose send error:', err);
+            } finally {
+              isProcessing = false;
+            }
+          }
+          if (active) {
+            animId = requestAnimationFrame(processFrame);
+          }
+        };
+
+        processFrame();
+      } catch (err) {
+        console.error('Failed to initialize MediaPipe Pose:', err);
+      }
+    };
+
+    initMediaPipe();
+
+    return () => {
+      active = false;
+      if (animId) cancelAnimationFrame(animId);
+      if (poseInstance && typeof poseInstance.close === 'function') {
+        poseInstance.close();
+      }
+    };
+  }, [isDemoMode, cameraPermission, onPoseDetected]);
+
   useEffect(() => {
     if (!isDemoMode) {
       startWebcam();

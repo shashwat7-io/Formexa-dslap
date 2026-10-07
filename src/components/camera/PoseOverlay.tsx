@@ -32,6 +32,9 @@ export const PoseOverlay: React.FC<PoseOverlayProps> = ({
 
     if (!landmarks || landmarks.length === 0) return;
 
+    // Helper for mirrored horizontal coordinate mapping to match mirrored webcam video
+    const getX = (xNorm: number) => (1 - xNorm) * width;
+
     // Extract target joints causing form faults to highlight in red
     const faultJoints = new Set<number>();
     activeCorrections.forEach((c) => {
@@ -47,9 +50,9 @@ export const PoseOverlay: React.FC<PoseOverlayProps> = ({
       const p2 = landmarks[connection.to];
 
       if (p1 && p2 && (p1.visibility ?? 1) > 0.4 && (p2.visibility ?? 1) > 0.4) {
-        const x1 = p1.x * width;
+        const x1 = getX(p1.x);
         const y1 = p1.y * height;
-        const x2 = p2.x * width;
+        const x2 = getX(p2.x);
         const y2 = p2.y * height;
 
         const isFaultBone = faultJoints.has(connection.from) || faultJoints.has(connection.to);
@@ -70,7 +73,7 @@ export const PoseOverlay: React.FC<PoseOverlayProps> = ({
     // 2. Draw Landmark Joints & Pulsing Fault Target Rings
     landmarks.forEach((lm, index) => {
       if (!lm || (lm.visibility ?? 1) < 0.4) return;
-      const x = lm.x * width;
+      const x = getX(lm.x);
       const y = lm.y * height;
 
       const isFault = faultJoints.has(index);
@@ -107,7 +110,7 @@ export const PoseOverlay: React.FC<PoseOverlayProps> = ({
         const targetLm = landmarks[targetIdx];
 
         if (targetLm && (targetLm.visibility ?? 1) > 0.4) {
-          const tx = targetLm.x * width;
+          const tx = getX(targetLm.x);
           const ty = targetLm.y * height;
 
           const isFault = correction.status === 'FAULT';
@@ -132,7 +135,7 @@ export const PoseOverlay: React.FC<PoseOverlayProps> = ({
           if (correction.id === 'elbow_drift') {
             const hipLm = landmarks[POSE_LANDMARKS.RIGHT_HIP] || landmarks[POSE_LANDMARKS.LEFT_HIP];
             if (hipLm) {
-              const hx = hipLm.x * width;
+              const hx = getX(hipLm.x);
               ctx.beginPath();
               ctx.moveTo(tx, ty);
               ctx.lineTo(hx, ty);
@@ -157,7 +160,7 @@ export const PoseOverlay: React.FC<PoseOverlayProps> = ({
         ref={canvasRef}
         width={width}
         height={height}
-        className="w-full h-full object-cover transform -scale-x-100"
+        className="w-full h-full object-cover"
       />
       {/* Top Left HUD Overlay */}
       <div className="absolute top-4 left-4 flex items-center space-x-3 bg-black/70 backdrop-blur-md border border-cyan-500/30 px-3.5 py-1.5 rounded-full text-xs font-mono text-cyan-300 shadow-xl z-20">

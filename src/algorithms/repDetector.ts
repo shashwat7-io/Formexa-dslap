@@ -150,11 +150,13 @@ export class RepDetector {
       case 'push_up':
         return (joints.leftElbowAngle + joints.rightElbowAngle) / 2;
       case 'squat':
-      case 'lunge':
         return (joints.leftKneeAngle + joints.rightKneeAngle) / 2;
+      case 'lunge':
+        return Math.min(joints.leftKneeAngle, joints.rightKneeAngle);
       case 'shoulder_press':
-      case 'lateral_raise':
       case 'chest_press':
+        return (joints.leftElbowAngle + joints.rightElbowAngle) / 2;
+      case 'lateral_raise':
         return (joints.leftShoulderAngle + joints.rightShoulderAngle) / 2;
       case 'deadlift':
       case 'dumbbell_row':
@@ -173,41 +175,49 @@ export class RepDetector {
   private isAtStartThreshold(angle: number): boolean {
     switch (this.exerciseId) {
       case 'bicep_curl':
-      case 'tricep_extension':
-      case 'squat':
-      case 'deadlift':
-        return angle > 145;
       case 'push_up':
-      case 'shoulder_press':
-      case 'lateral_raise':
-      case 'chest_press':
-      case 'lunge':
       case 'dumbbell_row':
         return angle > 130;
-      default:
+      case 'squat':
+      case 'lunge':
+        return angle > 135;
+      case 'deadlift':
         return angle > 140;
+
+      // Extension exercises (start at flexed/small angle)
+      case 'shoulder_press':
+      case 'chest_press':
+        return angle < 90;
+      case 'tricep_extension':
+        return angle < 85;
+      case 'lateral_raise':
+        return angle < 35;
+      default:
+        return angle > 130;
     }
   }
 
   private isAtPeakThreshold(angle: number): boolean {
     switch (this.exerciseId) {
       case 'bicep_curl':
-        return angle < 65;
+        return angle < 75;
       case 'squat':
       case 'lunge':
-        return angle < 95;
-      case 'push_up':
-        return angle < 90;
-      case 'shoulder_press':
-      case 'lateral_raise':
-        return angle > 140;
-      case 'deadlift':
-      case 'dumbbell_row':
         return angle < 100;
-      case 'tricep_extension':
-        return angle > 155;
+      case 'push_up':
+        return angle < 95;
+      case 'deadlift':
+        return angle < 110;
+      case 'dumbbell_row':
+        return angle < 85;
+
+      // Extension exercises (peak at extended/large angle)
+      case 'shoulder_press':
       case 'chest_press':
-        return angle > 150;
+      case 'tricep_extension':
+        return angle > 145;
+      case 'lateral_raise':
+        return angle > 70;
       default:
         return angle < 75;
     }
@@ -216,13 +226,20 @@ export class RepDetector {
   private getExpectedSpan(): number {
     switch (this.exerciseId) {
       case 'bicep_curl':
-        return 115;
+        return 60;
       case 'squat':
-        return 80;
+      case 'lunge':
+        return 50;
       case 'push_up':
-        return 75;
+        return 45;
+      case 'shoulder_press':
+      case 'chest_press':
+      case 'tricep_extension':
+        return 60;
+      case 'lateral_raise':
+        return 40;
       default:
-        return 80;
+        return 50;
     }
   }
 }

@@ -478,10 +478,10 @@
           const smoothedAngle = Math.round(angleHistoryRef.current.reduce((a, b) => a + b, 0) / angleHistoryRef.current.length);
 
           if (reps < TARGET_REPS_PER_SET) {
-            // Full extension start requirement (>155°)
-            if (repPhaseRef.current === 'START' && smoothedAngle < 45) {
+            // Extension & flexion rep tracking
+            if (repPhaseRef.current === 'START' && smoothedAngle < 75) {
               repPhaseRef.current = 'PEAK';
-            } else if (repPhaseRef.current === 'PEAK' && smoothedAngle > 165) {
+            } else if (repPhaseRef.current === 'PEAK' && smoothedAngle > 135) {
               repPhaseRef.current = 'START';
 
               // IF FORM WAS FLAWED OR DRIFT EXCEEDED LIMIT: DISQUALIFY REP!
