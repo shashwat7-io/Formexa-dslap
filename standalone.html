@@ -524,7 +524,7 @@
           setCameraError(null);
           try {
             const stream = await navigator.mediaDevices.getUserMedia({
-              video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+              video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user', frameRate: { ideal: 60 } },
               audio: false
             });
 
@@ -533,15 +533,15 @@
               await videoRef.current.play();
 
               if (window.Pose) {
-                const pose = new window.Pose({
+                const pose = poseInstanceRef.current || new window.Pose({
                   locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
                 });
 
                 pose.setOptions({
-                  modelComplexity: 2, // HEAVY ULTRA-ACCURATE
+                  modelComplexity: 1, // LIGHTNING FAST 60FPS FULL 3D POSE
                   smoothLandmarks: true,
-                  minDetectionConfidence: 0.75, // STRICT CONFIDENCE GATING
-                  minTrackingConfidence: 0.75
+                  minDetectionConfidence: 0.5, // INSTANT TRACKING LOCK-ON
+                  minTrackingConfidence: 0.5
                 });
 
                 pose.onResults(processPoseResultsStrict);
@@ -554,8 +554,8 @@
                         await poseInstanceRef.current.send({ image: videoRef.current });
                       }
                     },
-                    width: 1280,
-                    height: 720
+                    width: 640,
+                    height: 480
                   });
                   camera.start();
                   cameraInstanceRef.current = camera;
