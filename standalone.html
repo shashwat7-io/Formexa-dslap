@@ -225,8 +225,13 @@
         const [cameraState, setCameraState] = useState('prompt');
         const [cameraError, setCameraError] = useState(null);
 
-        // Workout Active State (Start / Off Option)
-        const [isWorkoutActive, setIsWorkoutActive] = useState(false);
+        // Workout Active State (Default True for live camera pose tracking)
+        const [isWorkoutActive, setIsWorkoutActive] = useState(true);
+        const isWorkoutActiveRef = useRef(true);
+
+        useEffect(() => {
+          isWorkoutActiveRef.current = isWorkoutActive;
+        }, [isWorkoutActive]);
 
         // Strict Telemetry State
         const [reps, setReps] = useState(0);
@@ -284,12 +289,12 @@
 
         useEffect(() => {
           const timer = setInterval(() => {
-            if (sessionMgrRef.current && isWorkoutActive) {
+            if (sessionMgrRef.current && isWorkoutActiveRef.current) {
               setSessionStatus(sessionMgrRef.current.status());
             }
           }, 1000);
           return () => clearInterval(timer);
-        }, [isWorkoutActive]);
+        }, []);
 
         const videoRef = useRef(null);
         const canvasRef = useRef(null);
@@ -303,15 +308,16 @@
         // Toggle Workout START / OFF
         const toggleWorkoutSession = async () => {
           if (!isWorkoutActive) {
-            // Unlock Web Audio Context
             playSoundEffect('REP_SUCCESS');
             setIsWorkoutActive(true);
+            isWorkoutActiveRef.current = true;
             speak('Workout started! Camera and strict 12 rep tracker active.', true);
             if (cameraState !== 'granted') {
               await startCameraStrict();
             }
           } else {
             setIsWorkoutActive(false);
+            isWorkoutActiveRef.current = false;
             speak('Workout turned off.', true);
           }
         };
@@ -326,7 +332,7 @@
           speak(`Starting Set ${setNumber + 1}. Goal is 12 strict reps.`, true);
         };
 
-        // Draw High-Precision Visual Corrections & Angle Arc Protractors
+        // Draw High-Precision Visual Corrections & 3D Joint Overlay Lines
         const drawBodyCorrectionsHighPrecision = (ctx, width, height, landmarks, flaws, joints) => {
           ctx.clearRect(0, 0, width, height);
           if (!landmarks || landmarks.length === 0) return;
@@ -334,7 +340,7 @@
           const getPt = (idx) => {
             const lm = landmarks[idx];
             if (!lm) return null;
-            return { x: (1 - lm.x) * width, y: lm.y * height, z: lm.z || 0, visibility: lm.visibility || 1 };
+            return { x: (1 - lm.x) * width, y: lm.y * height, z: lm.z || 0, visibility: lm.visibility ?? 1 };
           };
 
           const lShoulder = getPt(11); const rShoulder = getPt(12);
@@ -353,9 +359,9 @@
           const hasElbowDrift = flaws.some(f => f.id === 'elbow_drift');
           const hasTorsoSwing = flaws.some(f => f.id === 'torso_swing');
 
-          // Skeleton Lines
+          // 3D Skeleton Lines (Render reliably without strict visibility locks)
           connections.forEach(([p1, p2]) => {
-            if (p1 && p2 && p1.visibility > 0.5 && p2.visibility > 0.5) {
+            if (p1 && p2) {
               ctx.beginPath();
               ctx.moveTo(p1.x, p1.y);
               ctx.lineTo(p2.x, p2.y);
@@ -371,7 +377,7 @@
           // Joint Nodes
           const allJoints = [lShoulder, rShoulder, lElbow, rElbow, lWrist, rWrist, lHip, rHip, lKnee, rKnee, lAnkle, rAnkle];
           allJoints.forEach((pt) => {
-            if (pt && pt.visibility > 0.5) {
+            if (pt) {
               ctx.beginPath();
               ctx.arc(pt.x, pt.y, 7, 0, Math.PI * 2);
               ctx.fillStyle = flaws.length > 0 ? '#f43f5e' : '#05ffa1';
@@ -383,9 +389,9 @@
           });
 
           // Angle Callout Badge
-          if (rElbow && rElbow.visibility > 0.5) {
+          if (rElbow) {
             const driftText = `R-Elbow: ${joints.rightElbow}° | Drift: ${joints.upperArmDriftCm}cm ${hasElbowDrift ? '⚠️ STRICT FAULT (>8.0cm)' : '✓ PINNED'}`;
-            ctx.font = 'bold 12px JetBrains Mono';
+            ctx.font = 'bold 12px JetBrains Mono, monospace';
             const txtWidth = ctx.measureText(driftText).width;
 
             ctx.fillStyle = hasElbowDrift ? 'rgba(159, 18, 57, 0.95)' : 'rgba(6, 78, 59, 0.95)';
@@ -397,9 +403,9 @@
           }
         };
 
-        // ULTRA-STRICT REAL-TIME POSE & STRICT REP DISQUALIFICATION ENGINE
+        // ULTRA-STRICT REAL-TIME POSE & DYNAMIC REP COUNTER ENGINE
         const processPoseResultsStrict = (results) => {
-          if (!isWorkoutActive) return;
+          if (!isWorkoutActiveRef.current) return;
 
           const landmarks = results.poseLandmarks;
           const isInFrame = landmarks && landmarks.length > 0;
@@ -439,20 +445,18 @@
           let score = 100;
 
           if (exercise === 'bicep_curl') {
-            // Strict Arm Drift Limit: > 8.0 cm
             if (upperArmDriftCm > 8.0) {
               flaws.push({ id: 'elbow_drift', name: 'Elbow Drift', message: `STRICT FAULT: Arm drift ${upperArmDriftCm}cm (Limit: 8.0cm). Pin elbows to ribs!` });
               score -= 35;
               currentRepHadFlawsRef.current = true;
             }
-            // Strict Torso Swing Limit: > 6.0 degrees
             if (torsoLean > 6.0) {
               flaws.push({ id: 'torso_swing', name: 'Torso Momentum', message: `STRICT FAULT: Torso swing ${torsoLean}° (Limit: 6.0°). Lock spine vertical!` });
               score -= 25;
               currentRepHadFlawsRef.current = true;
             }
           } else if (exercise === 'squat') {
-            if (rightKneeAngle > 90) {
+            if (rightKneeAngle > 100) {
               flaws.push({ id: 'squat_depth', name: 'Incomplete Depth', message: `STRICT FAULT: Knee angle ${rightKneeAngle}°. Descend parallel to <=90°.` });
               score -= 30;
               currentRepHadFlawsRef.current = true;
@@ -470,39 +474,49 @@
             setPrimaryCorrectionMsg('Strict posture clean. Lockout maintained.');
           }
 
-          // --- ULTRA-STRICT REP DISQUALIFICATION & COUNTER ENGINE ---
-          const rawAngle = (leftElbowAngle + rightElbowAngle) / 2;
+          // --- DYNAMIC EXERCISE REP DETECTION & COUNTER ---
+          let trackAngle = (leftElbowAngle + rightElbowAngle) / 2;
+          let flexThreshold = 75; // Peak flexion angle (elbows bent)
+          let extendThreshold = 135; // Fully extended angle (elbows straight)
+
+          if (exercise === 'squat') {
+            trackAngle = (leftKneeAngle + rightKneeAngle) / 2;
+            flexThreshold = 95; // Parallel depth
+            extendThreshold = 155; // Standing lockout
+          }
           
-          angleHistoryRef.current.push(rawAngle);
+          angleHistoryRef.current.push(trackAngle);
           if (angleHistoryRef.current.length > 5) angleHistoryRef.current.shift();
           const smoothedAngle = Math.round(angleHistoryRef.current.reduce((a, b) => a + b, 0) / angleHistoryRef.current.length);
 
           if (reps < TARGET_REPS_PER_SET) {
-            // Extension & flexion rep tracking
-            if (repPhaseRef.current === 'START' && smoothedAngle < 75) {
+            // State Machine Transition: START -> PEAK -> START
+            if (repPhaseRef.current === 'START' && smoothedAngle <= flexThreshold) {
               repPhaseRef.current = 'PEAK';
-            } else if (repPhaseRef.current === 'PEAK' && smoothedAngle > 135) {
+            } else if (repPhaseRef.current === 'PEAK' && smoothedAngle >= extendThreshold) {
               repPhaseRef.current = 'START';
 
               // IF FORM WAS FLAWED OR DRIFT EXCEEDED LIMIT: DISQUALIFY REP!
-              if (currentRepHadFlawsRef.current || score < 80) {
+              if (currentRepHadFlawsRef.current || score < 75) {
                 playSoundEffect('FAULT_WARNING');
                 setRepDisqualifiedMsg('⚠️ REP DISQUALIFIED: Strict Form Violation! Maintain clean technique.');
-                speak('Rep disqualified due to form violation! Keep elbows pinned.', true);
+                speak('Rep disqualified due to form violation! Keep technique clean.', true);
                 setTimeout(() => setRepDisqualifiedMsg(null), 3000);
               } else {
                 // REP VALIDATED & ACCEPTED!
-                const nextRep = reps + 1;
-                setReps(nextRep);
-                playSoundEffect('REP_SUCCESS');
+                setReps((prevReps) => {
+                  const nextRep = prevReps + 1;
+                  playSoundEffect('REP_SUCCESS');
 
-                if (nextRep === TARGET_REPS_PER_SET) {
-                  setIsSetCompleteModalOpen(true);
-                  playSoundEffect('SET_COMPLETE');
-                  speak(`Outstanding! Set ${setNumber} completed with all 12 strict reps!`, true);
-                } else {
-                  speak(`Strict Rep ${nextRep} logged.`);
-                }
+                  if (nextRep === TARGET_REPS_PER_SET) {
+                    setIsSetCompleteModalOpen(true);
+                    playSoundEffect('SET_COMPLETE');
+                    speak(`Outstanding! Set ${setNumber} completed with all 12 strict reps!`, true);
+                  } else {
+                    speak(`Strict Rep ${nextRep} logged.`);
+                  }
+                  return nextRep;
+                });
               }
 
               // Reset flaw tracker for next rep
