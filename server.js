@@ -12,12 +12,6 @@ const PORT = process.env.PORT || 10000;
 const standalonePath = path.join(__dirname, 'standalone.html');
 const distDir = path.join(__dirname, 'dist');
 
-// Serve root directory static assets
-app.use(express.static(__dirname));
-if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir));
-}
-
 // Health check endpoint for Render
 app.get('/healthz', (req, res) => {
   res.status(200).send('OK');
@@ -35,6 +29,12 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
   }
 });
+
+// Serve static assets
+if (fs.existsSync(distDir)) {
+  app.use(express.static(distDir));
+}
+app.use(express.static(__dirname));
 
 app.get('*', (req, res) => {
   if (fs.existsSync(standalonePath)) {

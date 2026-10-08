@@ -2,20 +2,799 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FORMEXA - dslap | Real-Time AI Gym Form & Posture Analyzer</title>
-    <meta name="description" content="FORMEXA - dslap: AI-powered gym assistant analyzing body technique, form score, joint biomechanics, and target muscle engagement in real time." />
+    <title>FORMEXA - dslap | High-Precision Biomechanical Form Analyzer</title>
+    <meta name="description" content="FORMEXA - dslap: Ultra-strict high-precision AI Gym Form & Posture Analyzer with MediaPipe 3D pose tracking and strict rep validation." />
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              slate: { 950: '#030712' }
+            }
+          }
+        }
+      }
+    </script>
+    <!-- React & ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel standalone for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- MediaPipe Pose & Camera Utils CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700;800&display=swap" rel="stylesheet">
-    <!-- MediaPipe Pose & Camera Utils CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <style>
+      body { font-family: 'Inter', sans-serif; }
+      .font-mono { font-family: 'JetBrains+Mono', monospace; }
+    </style>
   </head>
-  <body class="bg-slate-950 text-slate-100 min-h-screen">
+  <body class="bg-slate-950 text-slate-100 min-h-screen selection:bg-cyan-500 selection:text-slate-950">
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+
+    <script type="text/babel">
+      const { useState, useEffect, useRef, useCallback } = React;
+
+      // --- WEB AUDIO API SOUND SYNTHESIZER ---
+      const playSoundEffect = (type) => {
+        try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (!AudioCtx) return;
+          const ctx = new AudioCtx();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+
+          if (type === 'REP_SUCCESS') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.15);
+            gain.gain.setValueAtTime(0.25, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.15);
+          } else if (type === 'FAULT_WARNING') {
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(180, ctx.currentTime);
+            gain.gain.setValueAtTime(0.35, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.25);
+          } else if (type === 'SET_COMPLETE') {
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+            osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.1);
+            osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.2);
+            osc.frequency.setValueAtTime(1046.50, ctx.currentTime + 0.3);
+            gain.gain.setValueAtTime(0.4, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.5);
+          }
+        } catch (e) {
+          console.warn('AudioContext error:', e);
+        }
+      };
+
+      // --- ULTRA-STRICT EXERCISE DEFINITIONS & TOLERANCES ---
+      const EXERCISES = {
+        bicep_curl: {
+          name: 'Bicep Curl',
+          category: 'Arm Isolation',
+          primary: 'Biceps Brachii',
+          secondary: 'Brachialis, Forearms',
+          idealElbow: '35° - 45°',
+          idealTorso: '0° - 6°',
+          strictDriftLimit: '8.0 cm',
+          strictTorsoLimit: '6.0°',
+          targetReps: 12
+        },
+        squat: {
+          name: 'Barbell Squat',
+          category: 'Lower Body Compound',
+          primary: 'Quadriceps, Gluteus Maximus',
+          secondary: 'Hamstrings, Core',
+          idealKnee: '80° - 90° (Parallel)',
+          idealTorso: '< 25° Incline',
+          strictDepthLimit: '90.0°',
+          strictValgusLimit: '< 3.0%',
+          targetReps: 12
+        },
+        push_up: {
+          name: 'Push-Up',
+          category: 'Upper Body Press',
+          primary: 'Pectoralis Major',
+          secondary: 'Anterior Deltoids, Triceps',
+          idealElbow: '90° Flexion',
+          idealHip: '170° - 180° Plank',
+          strictPlankLimit: '170° - 180°',
+          targetReps: 12
+        },
+        shoulder_press: {
+          name: 'Overhead Press',
+          category: 'Shoulders',
+          primary: 'Deltoids',
+          secondary: 'Triceps, Upper Chest',
+          idealShoulder: '160° Overhead',
+          idealTorso: '0° Neutral Spine',
+          strictArchLimit: '< 8.0°',
+          targetReps: 12
+        },
+        lunge: {
+          name: 'Forward Lunge',
+          category: 'Unilateral Legs',
+          primary: 'Quadriceps, Glutes',
+          secondary: 'Calves, Core',
+          idealKnee: '90° Front & Back',
+          idealTorso: 'Upright',
+          targetReps: 12
+        }
+      };
+
+      const TARGET_REPS_PER_SET = 12;
+
+      // --- STRICT SESSION STATE MANAGER ---
+      const OUT_OF_FRAME_DISCARD_MS = 2 * 60 * 1000;
+      const DEBOUNCE_FRAMES = 8;
+
+      class SessionStateManager {
+        constructor(onDiscard, onPause, onResume) {
+          this.state = 'ACTIVE';
+          this.outOfFrameSince = null;
+          this.consecutiveOutOfFrame = 0;
+          this.consecutiveInFrame = 0;
+          this.onDiscard = onDiscard;
+          this.onPause = onPause;
+          this.onResume = onResume;
+        }
+
+        update(isInFrame, now = Date.now()) {
+          if (this.state === 'DISCARDED') return this.status(now);
+
+          if (isInFrame) {
+            this.consecutiveInFrame++;
+            this.consecutiveOutOfFrame = 0;
+
+            if (this.state === 'PAUSED' && this.consecutiveInFrame >= 3) {
+              this.state = 'ACTIVE';
+              this.outOfFrameSince = null;
+              this.onResume();
+            }
+            return this.status(now);
+          }
+
+          this.consecutiveOutOfFrame++;
+          this.consecutiveInFrame = 0;
+
+          if (this.state === 'ACTIVE') {
+            if (this.consecutiveOutOfFrame >= DEBOUNCE_FRAMES) {
+              this.state = 'PAUSED';
+              this.outOfFrameSince = now;
+              this.onPause();
+            }
+          } else if (this.state === 'PAUSED') {
+            const outDuration = now - (this.outOfFrameSince || now);
+            if (outDuration >= OUT_OF_FRAME_DISCARD_MS) {
+              this.state = 'DISCARDED';
+              this.onDiscard();
+            }
+          }
+          return this.status(now);
+        }
+
+        status(now = Date.now()) {
+          const outDurationMs = this.outOfFrameSince ? now - this.outOfFrameSince : 0;
+          const remainingMs = this.state === 'PAUSED' ? Math.max(0, OUT_OF_FRAME_DISCARD_MS - outDurationMs) : null;
+          let formattedRemainingTime = null;
+          if (remainingMs !== null) {
+            const totalSec = Math.ceil(remainingMs / 1000);
+            const m = Math.floor(totalSec / 60);
+            const s = totalSec % 60;
+            formattedRemainingTime = `${m}:${s < 10 ? '0' : ''}${s}`;
+          }
+          return { state: this.state, remainingMs, formattedRemainingTime };
+        }
+      }
+
+      // --- HIGH-PRECISION 3D VECTOR ANGLE CALCULATION ---
+      function calculateAngle3D(a, b, c) {
+        if (!a || !b || !c) return 180;
+        const v1 = { x: a.x - b.x, y: a.y - b.y, z: (a.z || 0) - (b.z || 0) };
+        const v2 = { x: c.x - b.x, y: c.y - b.y, z: (c.z || 0) - (b.z || 0) };
+        const dot = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+        const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y + v1.z * v1.z);
+        const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y + v2.z * v2.z);
+        if (mag1 === 0 || mag2 === 0) return 180;
+        const cosTheta = Math.max(-1, Math.min(1, dot / (mag1 * mag2)));
+        return Math.round((Math.acos(cosTheta) * 180) / Math.PI);
+      }
+
+      // --- MAIN APP COMPONENT ---
+      function FitFormApp() {
+        const [exercise, setExercise] = useState('bicep_curl');
+        const exerciseRef = useRef('bicep_curl');
+
+        useEffect(() => {
+          exerciseRef.current = exercise;
+          repPhaseRef.current = 'START';
+          angleHistoryRef.current = [];
+          currentRepHadFlawsRef.current = false;
+        }, [exercise]);
+
+        const [isDemoMode, setIsDemoMode] = useState(false);
+        const [simPreset, setSimPreset] = useState('PERFECT');
+        const [cameraState, setCameraState] = useState('prompt');
+        const [cameraError, setCameraError] = useState(null);
+
+        // Workout Active State (Default True for live camera pose tracking)
+        const [isWorkoutActive, setIsWorkoutActive] = useState(true);
+        const isWorkoutActiveRef = useRef(true);
+
+        useEffect(() => {
+          isWorkoutActiveRef.current = isWorkoutActive;
+        }, [isWorkoutActive]);
+
+        // Strict Telemetry State
+        const [reps, setReps] = useState(0);
+        const [setNumber, setSetNumber] = useState(1);
+        const [isSetCompleteModalOpen, setIsSetCompleteModalOpen] = useState(false);
+        const [formScore, setFormScore] = useState(96);
+        const [activeFlaws, setActiveFlaws] = useState([]);
+        const [primaryCorrectionMsg, setPrimaryCorrectionMsg] = useState('Strict posture clean. Lockout maintained.');
+        const [repDisqualifiedMsg, setRepDisqualifiedMsg] = useState(null);
+        const [isComparisonOpen, setIsComparisonOpen] = useState(false);
+        const [liveJoints, setLiveJoints] = useState({
+          leftElbow: 170,
+          rightElbow: 170,
+          leftKnee: 175,
+          rightKnee: 175,
+          torsoLean: 2,
+          upperArmDriftCm: 3.2
+        });
+
+        // Speech synth with immediate audio feedback
+        const lastSpokenRef = useRef(0);
+        const speak = (msg, force = false) => {
+          if ('speechSynthesis' in window) {
+            if (force || Date.now() - lastSpokenRef.current > 2200) {
+              window.speechSynthesis.cancel();
+              const u = new SpeechSynthesisUtterance(msg);
+              u.rate = 1.1;
+              u.volume = 1.0;
+              window.speechSynthesis.speak(u);
+              lastSpokenRef.current = Date.now();
+            }
+          }
+        };
+
+        // Session manager
+        const sessionMgrRef = useRef(null);
+        const [sessionStatus, setSessionStatus] = useState({ state: 'ACTIVE', formattedRemainingTime: null });
+
+        if (!sessionMgrRef.current) {
+          sessionMgrRef.current = new SessionStateManager(
+            () => {
+              setReps(0);
+              playSoundEffect('FAULT_WARNING');
+              speak('Set discarded due to two minutes out of camera frame.', true);
+            },
+            () => {
+              playSoundEffect('FAULT_WARNING');
+              speak('Set paused. Step into camera view to resume.', true);
+            },
+            () => {
+              speak('Resuming set tracking.', true);
+            }
+          );
+        }
+
+        useEffect(() => {
+          const timer = setInterval(() => {
+            if (sessionMgrRef.current && isWorkoutActiveRef.current) {
+              setSessionStatus(sessionMgrRef.current.status());
+            }
+          }, 1000);
+          return () => clearInterval(timer);
+        }, []);
+
+        const videoRef = useRef(null);
+        const canvasRef = useRef(null);
+        const poseInstanceRef = useRef(null);
+        const cameraInstanceRef = useRef(null);
+        const repPhaseRef = useRef('START');
+        const angleHistoryRef = useRef([]);
+        const currentRepHadFlawsRef = useRef(false);
+
+        // Select Exercise from Menu
+        const handleSelectExercise = (key) => {
+          setExercise(key);
+          setReps(0);
+          repPhaseRef.current = 'START';
+          currentRepHadFlawsRef.current = false;
+          playSoundEffect('REP_SUCCESS');
+          speak(`Tracking ${EXERCISES[key].name}. Goal is 12 strict reps.`, true);
+        };
+
+        // Toggle Workout START / OFF
+        const toggleWorkoutSession = async () => {
+          if (!isWorkoutActive) {
+            playSoundEffect('REP_SUCCESS');
+            setIsWorkoutActive(true);
+            isWorkoutActiveRef.current = true;
+            speak('Workout started! Camera and strict 12 rep tracker active.', true);
+            if (cameraState !== 'granted') {
+              await startCameraStrict();
+            }
+          } else {
+            setIsWorkoutActive(false);
+            isWorkoutActiveRef.current = false;
+            speak('Workout turned off.', true);
+          }
+        };
+
+        const handleStartNextSet = () => {
+          setReps(0);
+          setSetNumber(s => s + 1);
+          setIsSetCompleteModalOpen(false);
+          repPhaseRef.current = 'START';
+          currentRepHadFlawsRef.current = false;
+          playSoundEffect('SET_COMPLETE');
+          speak(`Starting Set ${setNumber + 1}. Goal is 12 strict reps.`, true);
+        };
+
+        // Draw High-Precision Visual Corrections & 3D Joint Overlay Lines
+        const drawBodyCorrectionsHighPrecision = (ctx, width, height, landmarks, flaws, joints) => {
+          ctx.clearRect(0, 0, width, height);
+          if (!landmarks || landmarks.length === 0) return;
+
+          const getPt = (idx) => {
+            const lm = landmarks[idx];
+            if (!lm) return null;
+            return { x: (1 - lm.x) * width, y: lm.y * height, z: lm.z || 0, visibility: lm.visibility ?? 1 };
+          };
+
+          const lShoulder = getPt(11); const rShoulder = getPt(12);
+          const lElbow = getPt(13); const rElbow = getPt(14);
+          const lWrist = getPt(15); const rWrist = getPt(16);
+          const lHip = getPt(23); const rHip = getPt(24);
+          const lKnee = getPt(25); const rKnee = getPt(26);
+          const lAnkle = getPt(27); const rAnkle = getPt(28);
+
+          const connections = [
+            [lShoulder, rShoulder], [lShoulder, lHip], [rShoulder, rHip], [lHip, rHip],
+            [lShoulder, lElbow], [lElbow, lWrist], [rShoulder, rElbow], [rElbow, rWrist],
+            [lHip, lKnee], [lKnee, lAnkle], [rHip, rKnee], [rKnee, rAnkle]
+          ];
+
+          const hasElbowDrift = flaws.some(f => f.id === 'elbow_drift');
+          const hasTorsoSwing = flaws.some(f => f.id === 'torso_swing');
+
+          // 3D Skeleton Lines
+          connections.forEach(([p1, p2]) => {
+            if (p1 && p2) {
+              ctx.beginPath();
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+              ctx.lineWidth = 5;
+              ctx.shadowBlur = flaws.length > 0 ? 14 : 8;
+              ctx.shadowColor = flaws.length > 0 ? '#f43f5e' : '#00f6ff';
+              ctx.strokeStyle = flaws.length > 0 ? 'rgba(244, 63, 94, 0.95)' : 'rgba(0, 246, 255, 0.9)';
+              ctx.stroke();
+              ctx.shadowBlur = 0;
+            }
+          });
+
+          // Joint Nodes
+          const allJoints = [lShoulder, rShoulder, lElbow, rElbow, lWrist, rWrist, lHip, rHip, lKnee, rKnee, lAnkle, rAnkle];
+          allJoints.forEach((pt) => {
+            if (pt) {
+              ctx.beginPath();
+              ctx.arc(pt.x, pt.y, 7, 0, Math.PI * 2);
+              ctx.fillStyle = flaws.length > 0 ? '#f43f5e' : '#05ffa1';
+              ctx.fill();
+              ctx.lineWidth = 2;
+              ctx.strokeStyle = '#ffffff';
+              ctx.stroke();
+            }
+          });
+
+          // Angle Callout Badge
+          if (rElbow) {
+            const driftText = `R-Elbow: ${joints.rightElbow}° | Drift: ${joints.upperArmDriftCm}cm ${hasElbowDrift ? '⚠️ STRICT FAULT (>8.0cm)' : '✓ PINNED'}`;
+            ctx.font = 'bold 12px JetBrains Mono, monospace';
+            const txtWidth = ctx.measureText(driftText).width;
+
+            ctx.fillStyle = hasElbowDrift ? 'rgba(159, 18, 57, 0.95)' : 'rgba(6, 78, 59, 0.95)';
+            ctx.fillRect(rElbow.x + 15, rElbow.y - 14, txtWidth + 18, 26);
+            ctx.strokeStyle = hasElbowDrift ? '#f43f5e' : '#10b981';
+            ctx.strokeRect(rElbow.x + 15, rElbow.y - 14, txtWidth + 18, 26);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(driftText, rElbow.x + 23, rElbow.y + 3);
+          }
+        };
+
+        // ULTRA-STRICT REAL-TIME POSE & DYNAMIC REP COUNTER ENGINE
+        const processPoseResultsStrict = (results) => {
+          if (!isWorkoutActiveRef.current) return;
+
+          const landmarks = results.poseLandmarks;
+          const isInFrame = landmarks && landmarks.length > 0;
+
+          const status = sessionMgrRef.current.update(isInFrame);
+          setSessionStatus(status);
+
+          if (!isInFrame || status.state === 'PAUSED' || status.state === 'DISCARDED') {
+            if (canvasRef.current) {
+              const ctx = canvasRef.current.getContext('2d');
+              ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+            }
+            return;
+          }
+
+          const lShoulder = landmarks[11]; const rShoulder = landmarks[12];
+          const lElbow = landmarks[13]; const rElbow = landmarks[14];
+          const lWrist = landmarks[15]; const rWrist = landmarks[16];
+          const lHip = landmarks[23]; const rHip = landmarks[24];
+          const lKnee = landmarks[25]; const rKnee = landmarks[26];
+          const lAnkle = landmarks[27]; const rAnkle = landmarks[28];
+
+          const leftElbowAngle = calculateAngle3D(lShoulder, lElbow, lWrist);
+          const rightElbowAngle = calculateAngle3D(rShoulder, rElbow, rWrist);
+          const leftKneeAngle = calculateAngle3D(lHip, lKnee, lAnkle);
+          const rightKneeAngle = calculateAngle3D(rHip, rKnee, rAnkle);
+
+          const shoulderMid = { x: (lShoulder.x + rShoulder.x) / 2, y: (lShoulder.y + rShoulder.y) / 2 };
+          const hipMid = { x: (lHip.x + rHip.x) / 2, y: (lHip.y + rHip.y) / 2 };
+          const torsoLean = Math.round(Math.abs(Math.atan2(hipMid.x - shoulderMid.x, hipMid.y - shoulderMid.y) * 180 / Math.PI));
+          const upperArmDriftCm = Math.round(Math.abs((rElbow.x - rShoulder.x) * 100) * 10) / 10;
+
+          setLiveJoints({ leftElbow: leftElbowAngle, rightElbow: rightElbowAngle, leftKnee: leftKneeAngle, rightKnee: rightKneeAngle, torsoLean, upperArmDriftCm });
+
+          // STRICT FORM EVALUATION FOR SELECTED EXERCISE
+          const activeExKey = exerciseRef.current;
+          const flaws = [];
+          let score = 100;
+
+          if (activeExKey === 'bicep_curl') {
+            if (upperArmDriftCm > 8.0) {
+              flaws.push({ id: 'elbow_drift', name: 'Elbow Drift', message: `STRICT FAULT: Arm drift ${upperArmDriftCm}cm (Limit: 8.0cm). Pin elbows to ribs!` });
+              score -= 35;
+              currentRepHadFlawsRef.current = true;
+            }
+            if (torsoLean > 6.0) {
+              flaws.push({ id: 'torso_swing', name: 'Torso Momentum', message: `STRICT FAULT: Torso swing ${torsoLean}° (Limit: 6.0°). Lock spine vertical!` });
+              score -= 25;
+              currentRepHadFlawsRef.current = true;
+            }
+          } else if (activeExKey === 'squat') {
+            const minKnee = Math.min(leftKneeAngle, rightKneeAngle);
+            if (minKnee > 100 && repPhaseRef.current === 'PEAK') {
+              flaws.push({ id: 'squat_depth', name: 'Incomplete Depth', message: `STRICT FAULT: Knee angle ${minKnee}°. Descend parallel to <=90°.` });
+              score -= 30;
+              currentRepHadFlawsRef.current = true;
+            }
+          }
+
+          setActiveFlaws(flaws);
+          setFormScore(Math.max(40, score));
+
+          if (flaws.length > 0) {
+            setPrimaryCorrectionMsg(flaws[0].message);
+            playSoundEffect('FAULT_WARNING');
+            speak(flaws[0].message);
+          } else {
+            setPrimaryCorrectionMsg('Strict posture clean. Lockout maintained.');
+          }
+
+          // --- DYNAMIC EXERCISE REP DETECTION & COUNTER ENGINE ---
+          let trackAngle = Math.min(leftElbowAngle, rightElbowAngle);
+          let flexThreshold = 80;   // Peak flexion angle (elbows bent <= 80°)
+          let extendThreshold = 140; // Fully extended angle (elbows straight >= 140°)
+
+          if (activeExKey === 'squat') {
+            trackAngle = Math.min(leftKneeAngle, rightKneeAngle);
+            flexThreshold = 95;   // Deep parallel squat <= 95°
+            extendThreshold = 155; // Standing lockout >= 155°
+          } else if (activeExKey === 'push_up') {
+            trackAngle = Math.min(leftElbowAngle, rightElbowAngle);
+            flexThreshold = 95;   // Bottom of press <= 95°
+            extendThreshold = 150; // Top lockout >= 150°
+          } else if (activeExKey === 'shoulder_press') {
+            trackAngle = Math.min(leftElbowAngle, rightElbowAngle);
+            flexThreshold = 95;   // Shoulder level <= 95°
+            extendThreshold = 150; // Overhead lockout >= 150°
+          } else if (activeExKey === 'lunge') {
+            trackAngle = Math.min(leftKneeAngle, rightKneeAngle);
+            flexThreshold = 95;   // Lunge depth <= 95°
+            extendThreshold = 150; // Standing >= 150°
+          }
+          
+          angleHistoryRef.current.push(trackAngle);
+          if (angleHistoryRef.current.length > 3) angleHistoryRef.current.shift();
+          const smoothedAngle = Math.round(angleHistoryRef.current.reduce((a, b) => a + b, 0) / angleHistoryRef.current.length);
+
+          if (reps < TARGET_REPS_PER_SET) {
+            // State Machine Transition: START -> PEAK -> START
+            if (repPhaseRef.current === 'START' && smoothedAngle <= flexThreshold) {
+              repPhaseRef.current = 'PEAK';
+            } else if (repPhaseRef.current === 'PEAK' && smoothedAngle >= extendThreshold) {
+              repPhaseRef.current = 'START';
+
+              // IF FORM WAS FLAWED: DISQUALIFY REP!
+              if (currentRepHadFlawsRef.current || score < 75) {
+                playSoundEffect('FAULT_WARNING');
+                setRepDisqualifiedMsg('⚠️ REP DISQUALIFIED: Strict Form Violation! Maintain clean technique.');
+                speak('Rep disqualified due to form violation! Keep technique clean.', true);
+                setTimeout(() => setRepDisqualifiedMsg(null), 3000);
+              } else {
+                // REP VALIDATED & ACCEPTED!
+                setReps((prevReps) => {
+                  const nextRep = prevReps + 1;
+                  playSoundEffect('REP_SUCCESS');
+
+                  if (nextRep === TARGET_REPS_PER_SET) {
+                    setIsSetCompleteModalOpen(true);
+                    playSoundEffect('SET_COMPLETE');
+                    speak(`Outstanding! Set ${setNumber} completed with all 12 strict reps!`, true);
+                  } else {
+                    speak(`Strict Rep ${nextRep} logged.`);
+                  }
+                  return nextRep;
+                });
+              }
+
+              // Reset flaw tracker for next rep
+              currentRepHadFlawsRef.current = false;
+            }
+          }
+
+          if (canvasRef.current && videoRef.current) {
+            const canvas = canvasRef.current;
+            canvas.width = videoRef.current.videoWidth || 640;
+            canvas.height = videoRef.current.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
+            drawBodyCorrectionsHighPrecision(ctx, canvas.width, canvas.height, landmarks, flaws, { rightElbow: rightElbowAngle, torsoLean, upperArmDriftCm });
+          }
+        };
+
+        const startCameraStrict = async () => {
+          setCameraState('starting');
+          setCameraError(null);
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user', frameRate: { ideal: 60 } },
+              audio: false
+            });
+
+            if (videoRef.current) {
+              videoRef.current.srcObject = stream;
+              await videoRef.current.play();
+
+              if (window.Pose) {
+                const pose = poseInstanceRef.current || new window.Pose({
+                  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+                });
+
+                pose.setOptions({
+                  modelComplexity: 1, // LIGHTNING FAST 60FPS FULL 3D POSE
+                  smoothLandmarks: true,
+                  minDetectionConfidence: 0.5, // INSTANT TRACKING LOCK-ON
+                  minTrackingConfidence: 0.5
+                });
+
+                pose.onResults(processPoseResultsStrict);
+                poseInstanceRef.current = pose;
+
+                if (window.Camera) {
+                  const camera = new window.Camera(videoRef.current, {
+                    onFrame: async () => {
+                      if (videoRef.current && poseInstanceRef.current) {
+                        await poseInstanceRef.current.send({ image: videoRef.current });
+                      }
+                    },
+                    width: 640,
+                    height: 480
+                  });
+                  camera.start();
+                  cameraInstanceRef.current = camera;
+                }
+              }
+
+              setCameraState('granted');
+              setIsDemoMode(false);
+            }
+          } catch (err) {
+            setCameraState('denied');
+            setCameraError(err.message || 'Camera permission denied.');
+          }
+        };
+
+        const currentDef = EXERCISES[exercise];
+        const progressPercent = Math.min(100, Math.round((reps / TARGET_REPS_PER_SET) * 100));
+
+        return (
+          <div className="min-h-screen flex flex-col font-sans">
+            <header className="bg-slate-900/90 border-b border-cyan-500/20 px-6 py-4 flex items-center justify-between sticky top-0 z-40 backdrop-blur-md">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-gradient-to-br from-cyan-500 to-emerald-400 rounded-xl text-slate-950 font-black text-lg shadow-lg">⚡</div>
+                <div>
+                  <h1 className="text-xl font-black text-white tracking-tight uppercase">
+                    FORMEXA - <span className="text-cyan-400 font-mono">dslap</span>
+                  </h1>
+                  <p className="text-xs text-slate-400">Strict Rep Validation Engine & Sound Feedback</p>
+                </div>
+              </div>
+
+              {/* Header Right Action & Sound Indicators */}
+              <div className="flex items-center space-x-3 font-mono text-xs">
+                {/* Audio Status Pill */}
+                <div className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 flex items-center space-x-2 text-emerald-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span>🔊 SOUND & SPEECH ACTIVE</span>
+                </div>
+
+                {/* WORKOUT START / OFF BUTTON */}
+                <button
+                  onClick={toggleWorkoutSession}
+                  className={`px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg flex items-center space-x-2 border ${
+                    isWorkoutActive
+                      ? 'bg-rose-500 hover:bg-rose-600 text-white border-rose-400 shadow-rose-500/20'
+                      : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 border-emerald-300 shadow-emerald-500/30 animate-bounce'
+                  }`}
+                >
+                  <span className="text-sm">{isWorkoutActive ? '⏹' : '▶'}</span>
+                  <span>{isWorkoutActive ? 'STOP WORKOUT' : 'START WORKOUT'}</span>
+                </button>
+
+                <div className="bg-slate-950 px-3.5 py-1.5 rounded-lg border border-slate-800 flex items-center space-x-2">
+                  <span className="text-slate-400">SET {setNumber}:</span>
+                  <span className="text-cyan-400 font-black text-base">{reps} / 12 REPS</span>
+                </div>
+              </div>
+            </header>
+
+            <main className="flex-1 max-w-[1550px] w-full mx-auto p-4 lg:p-6 space-y-6">
+              
+              {/* INTERACTIVE EXERCISE SELECTION MENU BAR */}
+              <div className="bg-slate-900 border border-cyan-500/30 p-4 rounded-2xl shadow-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-cyan-400 flex items-center space-x-2">
+                    <span>🎯 SELECT EXERCISE TO ANALYZE</span>
+                  </h3>
+                  <span className="text-[11px] font-mono text-slate-400">Target: 12 Strict Reps Per Set</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {Object.keys(EXERCISES).map((key) => {
+                    const ex = EXERCISES[key];
+                    const isSelected = exercise === key;
+                    const icons = { bicep_curl: '💪', squat: '🏋️‍♂️', push_up: '🧘', shoulder_press: '🙆', lunge: '🦵' };
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => handleSelectExercise(key)}
+                        className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between space-y-2 ${
+                          isSelected
+                            ? 'bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 border-cyan-400 shadow-lg shadow-cyan-500/20 ring-1 ring-cyan-400'
+                            : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-300 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xl">{icons[key] || '🏋️'}</span>
+                          {isSelected && <span className="text-[10px] font-mono font-bold bg-cyan-400 text-slate-950 px-1.5 py-0.5 rounded uppercase">ACTIVE</span>}
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white font-sans">{ex.name}</h4>
+                          <p className="text-[10px] text-slate-400 font-mono">{ex.category}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Rep Disqualified Alert Toast */}
+              {repDisqualifiedMsg && (
+                <div className="bg-rose-950/90 border border-rose-500/60 p-4 rounded-2xl shadow-2xl text-rose-100 flex items-center space-x-3 animate-pulse">
+                  <span className="text-2xl">🛑</span>
+                  <div>
+                    <h4 className="text-xs uppercase font-mono font-bold text-rose-400">STRICT REP DISQUALIFIED</h4>
+                    <p className="text-sm font-extrabold">{repDisqualifiedMsg}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-7 space-y-4">
+                  <div className="relative w-full h-[480px] lg:h-[540px] bg-slate-900 rounded-2xl overflow-hidden border border-cyan-500/30 shadow-2xl">
+                    <video ref={videoRef} className={`w-full h-full object-cover transform -scale-x-100 ${isWorkoutActive && cameraState === 'granted' ? 'block' : 'hidden'}`} autoPlay playsInline muted />
+                    <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover pointer-events-none z-10" />
+
+                    {!isWorkoutActive && (
+                      <div className="absolute inset-0 bg-slate-950/95 z-20 flex flex-col items-center justify-center p-6 text-center space-y-5">
+                        <div className="p-4 bg-emerald-500/20 text-emerald-400 rounded-3xl border border-emerald-500/40 text-4xl shadow-inner animate-pulse">🏋️‍♂️</div>
+                        <div className="space-y-2 max-w-md">
+                          <h3 className="text-2xl font-black text-white uppercase tracking-tight">WORKOUT IS CURRENTLY OFF</h3>
+                          <p className="text-xs text-slate-300">
+                            Click <strong className="text-emerald-400">START WORKOUT</strong> to activate Web Audio sound effects, voice feedback, MediaPipe 3D pose tracking, and strict 12-rep validation.
+                          </p>
+                        </div>
+                        <button onClick={toggleWorkoutSession} className="px-8 py-3.5 bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 font-black text-sm uppercase tracking-wider rounded-2xl shadow-2xl shadow-emerald-500/30 hover:scale-105 transition-all">
+                          ▶ START WORKOUT NOW
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="lg:col-span-5 space-y-4">
+                  {/* Set Progress Card */}
+                  <div className="bg-slate-900 border border-cyan-500/30 p-5 rounded-2xl space-y-4 shadow-xl">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                      <span className="text-xs uppercase font-mono font-bold px-2.5 py-1 bg-cyan-500/10 text-cyan-400 rounded-md border border-cyan-500/30">
+                        SET {setNumber} PROGRESS
+                      </span>
+                      <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-md">
+                        GOAL: 12 STRICT REPS
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-baseline justify-between">
+                        <div className="flex items-baseline space-x-2">
+                          <span className="text-6xl font-black font-mono text-white leading-none">{reps}</span>
+                          <span className="text-2xl font-bold font-mono text-slate-400">/ 12</span>
+                          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">STRICT REPS</span>
+                        </div>
+                        <span className="text-sm font-mono font-bold text-cyan-400">{progressPercent}%</span>
+                      </div>
+
+                      <div className="w-full bg-slate-950 rounded-full h-3.5 overflow-hidden border border-slate-800">
+                        <div className="h-full bg-gradient-to-r from-cyan-500 via-emerald-400 to-cyan-300 transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Exercise Analysis Telemetry Card */}
+                  <div className="bg-slate-900 border border-cyan-500/30 p-5 rounded-2xl space-y-4 shadow-xl">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                      <h4 className="text-xs font-mono font-bold uppercase text-slate-200">
+                        📊 EXERCISE TELEMETRY ANALYSIS
+                      </h4>
+                      <span className="text-xs font-mono text-cyan-400 font-bold">{currentDef.name}</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 font-mono text-xs">
+                      <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                        <span className="text-[10px] text-slate-400 uppercase block">Target Muscle</span>
+                        <span className="font-bold text-emerald-400">{currentDef.primary}</span>
+                      </div>
+                      <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                        <span className="text-[10px] text-slate-400 uppercase block">Form Score</span>
+                        <span className={`font-bold text-base ${formScore < 75 ? 'text-rose-400' : 'text-emerald-400'}`}>{formScore}%</span>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
+                      <span className="text-[10px] font-mono uppercase text-slate-400 block">Posture Guidance</span>
+                      <p className="text-xs font-sans text-slate-200">{primaryCorrectionMsg}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </main>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById('root')).render(<FitFormApp />);
+    </script>
   </body>
 </html>
