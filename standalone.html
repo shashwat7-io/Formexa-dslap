@@ -244,6 +244,7 @@
 
         // Strict Telemetry State
         const [reps, setReps] = useState(0);
+        const [repPhaseDisplay, setRepPhaseDisplay] = useState('START');
         const [setNumber, setSetNumber] = useState(1);
         const [isSetCompleteModalOpen, setIsSetCompleteModalOpen] = useState(false);
         const [formScore, setFormScore] = useState(96);
@@ -464,20 +465,22 @@
           let score = 100;
 
           if (activeExKey === 'bicep_curl') {
-            if (upperArmDriftCm > 8.0) {
-              flaws.push({ id: 'elbow_drift', name: 'Elbow Drift', message: `STRICT FAULT: Arm drift ${upperArmDriftCm}cm (Limit: 8.0cm). Pin elbows to ribs!` });
-              score -= 35;
+            // Realistic upper arm drift limit: > 18.0 cm
+            if (upperArmDriftCm > 18.0) {
+              flaws.push({ id: 'elbow_drift', name: 'Elbow Drift', message: `STRICT FAULT: Arm drift ${upperArmDriftCm}cm (Limit: 18.0cm). Pin elbows to ribs!` });
+              score -= 30;
               currentRepHadFlawsRef.current = true;
             }
-            if (torsoLean > 6.0) {
-              flaws.push({ id: 'torso_swing', name: 'Torso Momentum', message: `STRICT FAULT: Torso swing ${torsoLean}° (Limit: 6.0°). Lock spine vertical!` });
+            // Realistic torso swing limit: > 15.0 degrees
+            if (torsoLean > 15.0) {
+              flaws.push({ id: 'torso_swing', name: 'Torso Momentum', message: `STRICT FAULT: Torso swing ${torsoLean}° (Limit: 15.0°). Lock spine vertical!` });
               score -= 25;
               currentRepHadFlawsRef.current = true;
             }
           } else if (activeExKey === 'squat') {
             const minKnee = Math.min(leftKneeAngle, rightKneeAngle);
-            if (minKnee > 100 && repPhaseRef.current === 'PEAK') {
-              flaws.push({ id: 'squat_depth', name: 'Incomplete Depth', message: `STRICT FAULT: Knee angle ${minKnee}°. Descend parallel to <=90°.` });
+            if (minKnee > 115 && repPhaseRef.current === 'PEAK') {
+              flaws.push({ id: 'squat_depth', name: 'Incomplete Depth', message: `STRICT FAULT: Knee angle ${minKnee}°. Descend parallel to <=100°.` });
               score -= 30;
               currentRepHadFlawsRef.current = true;
             }
@@ -496,25 +499,25 @@
 
           // --- DYNAMIC EXERCISE REP DETECTION & COUNTER ENGINE ---
           let trackAngle = Math.min(leftElbowAngle, rightElbowAngle);
-          let flexThreshold = 80;   // Peak flexion angle (elbows bent <= 80°)
-          let extendThreshold = 140; // Fully extended angle (elbows straight >= 140°)
+          let flexThreshold = 95;   // Peak flexion angle (elbows bent <= 95°)
+          let extendThreshold = 130; // Fully extended angle (elbows straight >= 130°)
 
           if (activeExKey === 'squat') {
             trackAngle = Math.min(leftKneeAngle, rightKneeAngle);
-            flexThreshold = 95;   // Deep parallel squat <= 95°
-            extendThreshold = 155; // Standing lockout >= 155°
+            flexThreshold = 105;  // Parallel squat <= 105°
+            extendThreshold = 150; // Standing lockout >= 150°
           } else if (activeExKey === 'push_up') {
             trackAngle = Math.min(leftElbowAngle, rightElbowAngle);
-            flexThreshold = 95;   // Bottom of press <= 95°
-            extendThreshold = 150; // Top lockout >= 150°
+            flexThreshold = 100;  // Bottom of press <= 100°
+            extendThreshold = 145; // Top lockout >= 145°
           } else if (activeExKey === 'shoulder_press') {
             trackAngle = Math.min(leftElbowAngle, rightElbowAngle);
-            flexThreshold = 95;   // Shoulder level <= 95°
-            extendThreshold = 150; // Overhead lockout >= 150°
+            flexThreshold = 100;  // Shoulder level <= 100°
+            extendThreshold = 145; // Overhead lockout >= 145°
           } else if (activeExKey === 'lunge') {
             trackAngle = Math.min(leftKneeAngle, rightKneeAngle);
-            flexThreshold = 95;   // Lunge depth <= 95°
-            extendThreshold = 150; // Standing >= 150°
+            flexThreshold = 105;  // Lunge depth <= 105°
+            extendThreshold = 145; // Standing >= 145°
           }
           
           angleHistoryRef.current.push(trackAngle);
@@ -525,14 +528,16 @@
             // State Machine Transition: START -> PEAK -> START
             if (repPhaseRef.current === 'START' && smoothedAngle <= flexThreshold) {
               repPhaseRef.current = 'PEAK';
+              setRepPhaseDisplay('PEAK');
             } else if (repPhaseRef.current === 'PEAK' && smoothedAngle >= extendThreshold) {
               repPhaseRef.current = 'START';
+              setRepPhaseDisplay('START');
 
-              // IF FORM WAS FLAWED: DISQUALIFY REP!
-              if (currentRepHadFlawsRef.current || score < 75) {
+              // IF SEVERE FORM FLAW: DISQUALIFY REP!
+              if (currentRepHadFlawsRef.current || score < 60) {
                 playSoundEffect('FAULT_WARNING');
-                setRepDisqualifiedMsg('⚠️ REP DISQUALIFIED: Strict Form Violation! Maintain clean technique.');
-                speak('Rep disqualified due to form violation! Keep technique clean.', true);
+                setRepDisqualifiedMsg('⚠️ REP DISQUALIFIED: Form Violation! Maintain clean technique.');
+                speak('Rep disqualified due to form flaw! Keep technique clean.', true);
                 setTimeout(() => setRepDisqualifiedMsg(null), 3000);
               } else {
                 // REP VALIDATED & ACCEPTED!
@@ -758,6 +763,18 @@
 
                       <div className="w-full bg-slate-950 rounded-full h-3.5 overflow-hidden border border-slate-800">
                         <div className="h-full bg-gradient-to-r from-cyan-500 via-emerald-400 to-cyan-300 transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+                      </div>
+
+                      {/* Live Movement Phase Badge */}
+                      <div className="pt-2 flex items-center justify-between font-mono text-xs border-t border-slate-800">
+                        <span className="text-slate-400">LIVE PHASE:</span>
+                        <span className={`px-2.5 py-1 rounded-md font-bold text-[11px] border ${
+                          repPhaseDisplay === 'PEAK'
+                            ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 animate-pulse'
+                            : 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40'
+                        }`}>
+                          {repPhaseDisplay === 'PEAK' ? '🏋️‍♂️ PEAK FLEXION (BENT)' : '⚡ START EXTENSION (LOCKOUT)'}
+                        </span>
                       </div>
                     </div>
                   </div>
