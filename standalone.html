@@ -227,6 +227,8 @@
           repPhaseRef.current = 'START';
           emaAngleRef.current = null;
           peakTimestampRef.current = 0;
+          lastRepCompletedTimestampRef.current = 0;
+          flawFrameCountRef.current = 0;
           currentRepHadFlawsRef.current = false;
         }, [exercise]);
 
@@ -315,6 +317,8 @@
         const repPhaseRef = useRef('START');
         const emaAngleRef = useRef(null);
         const peakTimestampRef = useRef(0);
+        const lastRepCompletedTimestampRef = useRef(0);
+        const flawFrameCountRef = useRef(0);
         const currentRepHadFlawsRef = useRef(false);
 
         // Select Exercise from Menu
@@ -528,53 +532,69 @@
             setPrimaryCorrectionMsg('Strict posture clean. Lockout maintained.');
           }
 
-          // --- DYNAMIC EXERCISE REP DETECTION ENGINE (EMA SMOOTHED + HYSTERESIS) ---
+          // --- DYNAMIC ADAPTIVE EMA SMOOTHED & ULTRA-SMOOTH REP DETECTION ENGINE ---
           let rawAngle = Math.min(leftElbowAngle, rightElbowAngle);
-          let flexThreshold = 95;   // Peak flexion angle (elbows bent <= 95°)
-          let extendThreshold = 130; // Fully extended angle (elbows straight >= 130°)
+          let flexThreshold = 100;   // Peak flexion angle (elbows bent <= 100°)
+          let extendThreshold = 135; // Fully extended angle (elbows straight >= 135°)
 
           if (activeExKey === 'squat') {
             rawAngle = Math.min(leftKneeAngle, rightKneeAngle);
-            flexThreshold = 105;  // Parallel squat <= 105°
+            flexThreshold = 110;  // Parallel squat <= 110°
             extendThreshold = 150; // Standing lockout >= 150°
           } else if (activeExKey === 'push_up') {
             rawAngle = Math.min(leftElbowAngle, rightElbowAngle);
-            flexThreshold = 100;  // Bottom of press <= 100°
+            flexThreshold = 105;  // Bottom of press <= 105°
             extendThreshold = 145; // Top lockout >= 145°
           } else if (activeExKey === 'shoulder_press') {
             rawAngle = Math.min(leftElbowAngle, rightElbowAngle);
-            flexThreshold = 100;  // Shoulder level <= 100°
+            flexThreshold = 105;  // Shoulder level <= 105°
             extendThreshold = 145; // Overhead lockout >= 145°
           } else if (activeExKey === 'lunge') {
             rawAngle = Math.min(leftKneeAngle, rightKneeAngle);
-            flexThreshold = 105;  // Lunge depth <= 105°
+            flexThreshold = 110;  // Lunge depth <= 110°
             extendThreshold = 145; // Standing >= 145°
           }
 
-          // Exponential Moving Average (EMA) smoothing for zero-latency jitter removal
+          // Adaptive EMA smoothing (fast response during motion, heavy jitter elimination when steady)
           if (emaAngleRef.current === null) {
             emaAngleRef.current = rawAngle;
           } else {
-            emaAngleRef.current = 0.35 * rawAngle + 0.65 * emaAngleRef.current;
+            const angleDelta = Math.abs(rawAngle - emaAngleRef.current);
+            const adaptiveAlpha = angleDelta > 18 ? 0.55 : 0.30;
+            emaAngleRef.current = adaptiveAlpha * rawAngle + (1 - adaptiveAlpha) * emaAngleRef.current;
           }
           const smoothedAngle = Math.round(emaAngleRef.current);
+
+          // Flaw persistence filter (requires 4+ consecutive bad frames before marking rep as flawed)
+          if (flaws.length > 0) {
+            flawFrameCountRef.current = (flawFrameCountRef.current || 0) + 1;
+            if (flawFrameCountRef.current >= 4) {
+              currentRepHadFlawsRef.current = true;
+            }
+          } else {
+            flawFrameCountRef.current = 0;
+          }
 
           const now = Date.now();
           if (reps < TARGET_REPS_PER_SET) {
             // State Machine Transition: START -> PEAK -> START
             if (repPhaseRef.current === 'START' && smoothedAngle <= flexThreshold) {
-              repPhaseRef.current = 'PEAK';
-              peakTimestampRef.current = now;
-              setRepPhaseDisplay('PEAK');
+              // 350ms Refractory period guard to prevent premature re-triggering
+              if (now - (lastRepCompletedTimestampRef.current || 0) >= 350) {
+                repPhaseRef.current = 'PEAK';
+                peakTimestampRef.current = now;
+                setRepPhaseDisplay('PEAK');
+              }
             } else if (repPhaseRef.current === 'PEAK' && smoothedAngle >= extendThreshold) {
-              // Hysteresis check: require at least 120ms in PEAK phase to prevent false double counts
-              if (now - (peakTimestampRef.current || 0) >= 120) {
+              // Require at least 150ms spent in PEAK phase to verify genuine rep completion
+              if (now - (peakTimestampRef.current || 0) >= 150) {
                 repPhaseRef.current = 'START';
                 setRepPhaseDisplay('START');
+                lastRepCompletedTimestampRef.current = now;
 
-                if (currentRepHadFlawsRef.current || score < 60) {
+                if (currentRepHadFlawsRef.current) {
                   playSoundEffect('FAULT_WARNING');
-                  setRepDisqualifiedMsg('⚠️ REP DISQUALIFIED: Form Violation! Maintain clean technique.');
+                  setRepDisqualifiedMsg('⚠️ REP DISQUALIFIED: Sustained Form Flaw! Maintain clean posture.');
                   speak('Rep disqualified due to form flaw! Keep technique clean.', true);
                   setTimeout(() => setRepDisqualifiedMsg(null), 3000);
                 } else {
@@ -594,6 +614,7 @@
                 }
 
                 currentRepHadFlawsRef.current = false;
+                flawFrameCountRef.current = 0;
               }
             }
           }
